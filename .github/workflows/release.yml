@@ -21,7 +21,7 @@ jobs:
       release_id: ${{ steps.create_release.outputs.id }}
       version: ${{ steps.get_version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Get version from tag
         id: get_version
@@ -131,7 +131,7 @@ jobs:
             ext: ""
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
