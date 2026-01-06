@@ -225,7 +225,10 @@ mod tests {
 
         assert!(xml.contains(&format!("<EncryptionKey>{}</EncryptionKey>", zero_32_b64)));
         assert!(xml.contains(&format!("<MacKey>{}</MacKey>", zero_32_b64)));
-        assert!(xml.contains(&format!("<InitializationVector>{}</InitializationVector>", zero_16_b64)));
+        assert!(xml.contains(&format!(
+            "<InitializationVector>{}</InitializationVector>",
+            zero_16_b64
+        )));
         assert!(xml.contains(&format!("<Mac>{}</Mac>", zero_32_b64)));
         assert!(xml.contains(&format!("<FileDigest>{}</FileDigest>", zero_32_b64)));
     }

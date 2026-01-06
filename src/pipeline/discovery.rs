@@ -1,7 +1,7 @@
 //! File discovery module for scanning content folders.
 
-use std::path::{Path, PathBuf};
 use rayon::prelude::*;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 use crate::error::{IntunewinError, Result};
@@ -62,12 +62,13 @@ pub fn discover(content_folder: &Path, setup_file: &str) -> Result<DiscoveryResu
         ));
     }
 
-    let content_folder = content_folder
-        .canonicalize()
-        .map_err(|e| IntunewinError::FileReadError {
-            path: content_folder.to_path_buf(),
-            source: e,
-        })?;
+    let content_folder =
+        content_folder
+            .canonicalize()
+            .map_err(|e| IntunewinError::FileReadError {
+                path: content_folder.to_path_buf(),
+                source: e,
+            })?;
 
     // Phase 1: Walk directory to collect file paths (sequential due to directory iteration)
     let mut raw_files = Vec::new();
@@ -105,17 +106,19 @@ pub fn discover(content_folder: &Path, setup_file: &str) -> Result<DiscoveryResu
     let file_entries: Vec<(FileEntry, bool)> = raw_files
         .par_iter()
         .map(|raw| {
-            let metadata = std::fs::metadata(&raw.absolute_path)
-                .map_err(|e| IntunewinError::FileReadError {
+            let metadata = std::fs::metadata(&raw.absolute_path).map_err(|e| {
+                IntunewinError::FileReadError {
                     path: raw.absolute_path.clone(),
                     source: e,
-                })?;
+                }
+            })?;
 
             let size = metadata.len();
 
             // Check if this is the setup file
             let is_setup_file = raw.relative_path.to_string_lossy() == setup_file
-                || raw.relative_path
+                || raw
+                    .relative_path
                     .file_name()
                     .map(|n| n.to_string_lossy() == setup_file)
                     .unwrap_or(false);

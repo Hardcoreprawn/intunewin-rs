@@ -7,11 +7,11 @@
 //! without excessive memory usage.
 
 use aes::cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit};
+use hmac::Hmac;
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
-use hmac::Hmac;
 
 use crate::crypto::{compute_hmac_sha256, generate_aes_key, generate_iv, generate_mac_key};
 use crate::error::{IntunewinError, Result};
@@ -159,60 +159,64 @@ pub fn encrypt_file_streaming(
 ) -> Result<StreamingEncryptionResult> {
     use aes::cipher::KeyInit;
     use hmac::Mac as HmacMac;
-    
+
     // Buffer size: 64KB (must be multiple of AES block size 16)
     const BUFFER_SIZE: usize = 64 * 1024;
-    
+
     // Generate cryptographic material
     let key = generate_aes_key();
     let iv = generate_iv();
     let mac_key = generate_mac_key();
-    
+
     // Open input file
     let input_file = File::open(input_path).map_err(|e| IntunewinError::FileReadError {
         path: input_path.to_path_buf(),
         source: e,
     })?;
-    let input_size = input_file.metadata()
+    let input_size = input_file
+        .metadata()
         .map_err(|e| IntunewinError::FileReadError {
             path: input_path.to_path_buf(),
             source: e,
-        })?.len();
+        })?
+        .len();
     let mut reader = BufReader::with_capacity(BUFFER_SIZE, input_file);
-    
+
     // Create output file
     let output_file = File::create(output_path).map_err(|e| IntunewinError::FileWriteError {
         path: output_path.to_path_buf(),
         source: e,
     })?;
     let mut writer = BufWriter::with_capacity(BUFFER_SIZE, output_file);
-    
+
     // Initialize cipher state
     let cipher = aes::Aes256::new((&key).into());
     let mut current_iv = iv;
-    
+
     // Initialize HMAC and SHA256 for computing on-the-fly
-    let mut hmac_ctx: Hmac<Sha256> = HmacMac::new_from_slice(&mac_key)
-        .expect("HMAC can accept key of any size");
+    let mut hmac_ctx: Hmac<Sha256> =
+        HmacMac::new_from_slice(&mac_key).expect("HMAC can accept key of any size");
     let mut hasher = Sha256::new();
-    
+
     let mut buffer = vec![0u8; BUFFER_SIZE];
     let mut total_written: u64 = 0;
     let mut bytes_remaining = input_size;
-    
+
     loop {
-        let bytes_read = reader.read(&mut buffer).map_err(|e| IntunewinError::FileReadError {
-            path: input_path.to_path_buf(),
-            source: e,
-        })?;
-        
+        let bytes_read = reader
+            .read(&mut buffer)
+            .map_err(|e| IntunewinError::FileReadError {
+                path: input_path.to_path_buf(),
+                source: e,
+            })?;
+
         if bytes_read == 0 {
             break;
         }
-        
+
         bytes_remaining -= bytes_read as u64;
         let is_last_chunk = bytes_remaining == 0;
-        
+
         // Process this chunk
         let encrypted_chunk = if is_last_chunk {
             // Last chunk: apply PKCS7 padding
@@ -227,42 +231,46 @@ pub fn encrypt_file_streaming(
                 encrypt_chunk_no_padding(&buffer[..bytes_read], &cipher, &mut current_iv)
             }
         };
-        
+
         // Update HMAC and hash
         HmacMac::update(&mut hmac_ctx, &encrypted_chunk);
         hasher.update(&encrypted_chunk);
-        
+
         // Write encrypted data
-        writer.write_all(&encrypted_chunk).map_err(|e| IntunewinError::FileWriteError {
-            path: output_path.to_path_buf(),
-            source: e,
-        })?;
-        
+        writer
+            .write_all(&encrypted_chunk)
+            .map_err(|e| IntunewinError::FileWriteError {
+                path: output_path.to_path_buf(),
+                source: e,
+            })?;
+
         total_written += encrypted_chunk.len() as u64;
     }
-    
+
     // Handle empty file case
     if input_size == 0 {
         let encrypted_chunk = encrypt_chunk_with_padding(&[], &cipher, &mut current_iv);
         HmacMac::update(&mut hmac_ctx, &encrypted_chunk);
         hasher.update(&encrypted_chunk);
-        writer.write_all(&encrypted_chunk).map_err(|e| IntunewinError::FileWriteError {
-            path: output_path.to_path_buf(),
-            source: e,
-        })?;
+        writer
+            .write_all(&encrypted_chunk)
+            .map_err(|e| IntunewinError::FileWriteError {
+                path: output_path.to_path_buf(),
+                source: e,
+            })?;
         total_written += encrypted_chunk.len() as u64;
     }
-    
+
     // Flush writer
     writer.flush().map_err(|e| IntunewinError::FileWriteError {
         path: output_path.to_path_buf(),
         source: e,
     })?;
-    
+
     // Finalize HMAC and hash
     let mac: [u8; 32] = hmac_ctx.finalize().into_bytes().into();
     let file_digest: [u8; 32] = hasher.finalize().into();
-    
+
     Ok(StreamingEncryptionResult {
         key,
         iv,
@@ -280,27 +288,27 @@ fn encrypt_chunk_no_padding(
     current_iv: &mut [u8; 16],
 ) -> Vec<u8> {
     use aes::cipher::BlockEncrypt;
-    
+
     let mut output = Vec::with_capacity(plaintext.len());
-    
+
     for chunk in plaintext.chunks(16) {
         let mut block = [0u8; 16];
         block.copy_from_slice(chunk);
-        
+
         // XOR with IV (CBC mode)
         for (b, iv_byte) in block.iter_mut().zip(current_iv.iter()) {
             *b ^= iv_byte;
         }
-        
+
         // Encrypt block
         cipher.encrypt_block((&mut block).into());
-        
+
         // Update IV for next block
         current_iv.copy_from_slice(&block);
-        
+
         output.extend_from_slice(&block);
     }
-    
+
     output
 }
 
@@ -311,41 +319,41 @@ fn encrypt_chunk_with_padding(
     current_iv: &mut [u8; 16],
 ) -> Vec<u8> {
     use aes::cipher::BlockEncrypt;
-    
+
     // Calculate padded size
     let block_size = 16;
     let padding_len = block_size - (plaintext.len() % block_size);
     let padded_len = plaintext.len() + padding_len;
-    
+
     let mut padded = vec![0u8; padded_len];
     padded[..plaintext.len()].copy_from_slice(plaintext);
-    
+
     // Apply PKCS7 padding
     for byte in padded[plaintext.len()..].iter_mut() {
         *byte = padding_len as u8;
     }
-    
+
     // Encrypt all blocks
     let mut output = Vec::with_capacity(padded_len);
-    
+
     for chunk in padded.chunks(16) {
         let mut block = [0u8; 16];
         block.copy_from_slice(chunk);
-        
+
         // XOR with IV (CBC mode)
         for (b, iv_byte) in block.iter_mut().zip(current_iv.iter()) {
             *b ^= iv_byte;
         }
-        
+
         // Encrypt block
         cipher.encrypt_block((&mut block).into());
-        
+
         // Update IV for next block
         current_iv.copy_from_slice(&block);
-        
+
         output.extend_from_slice(&block);
     }
-    
+
     output
 }
 

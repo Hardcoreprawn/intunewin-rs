@@ -12,7 +12,7 @@ use crate::cli::Args;
 use crate::crypto::aes::{encrypt_file_streaming, encrypt_with_keygen};
 use crate::format;
 use crate::format::detection::{DetectionInfo, StreamingDetectionInfo};
-use crate::progress::{ProgressTracker, stage_msg};
+use crate::progress::{stage_msg, ProgressTracker};
 
 pub use compression::compress_to_inner_zip;
 pub use discovery::{discover, format_size, DiscoveryResult, FileEntry};
@@ -49,7 +49,7 @@ pub fn run(args: &Args) -> Result<()> {
 
     // Stage 1: Discover files
     let discovery = discover(&args.content, &args.setup)?;
-    
+
     progress.status(&format!(
         "{} Found {} files ({})",
         stage_msg(1, TOTAL_STAGES, "Discovery"),
@@ -62,7 +62,7 @@ pub fn run(args: &Args) -> Result<()> {
         discovery.total_size,
         &stage_msg(2, TOTAL_STAGES, "Compressing"),
     );
-    
+
     let use_mmap = !args.no_mmap;
     let zip_path = compress_to_inner_zip(
         &discovery,
@@ -72,9 +72,7 @@ pub fn run(args: &Args) -> Result<()> {
         Some(&compress_bar),
     )?;
 
-    let zip_size = std::fs::metadata(&zip_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let zip_size = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
 
     let compression_ratio = if discovery.total_size > 0 {
         (1.0 - (zip_size as f64 / discovery.total_size as f64)) * 100.0
@@ -90,27 +88,24 @@ pub fn run(args: &Args) -> Result<()> {
     ));
 
     // Stage 3: Encrypt the inner ZIP
-    let encrypt_bar = progress.create_byte_bar(
-        zip_size,
-        &stage_msg(3, TOTAL_STAGES, "Encrypting"),
-    );
-    
+    let encrypt_bar = progress.create_byte_bar(zip_size, &stage_msg(3, TOTAL_STAGES, "Encrypting"));
+
     let encrypted_path = args.output.join("IntunePackage.intunewin.tmp");
-    
+
     // Use streaming encryption for large files to avoid memory exhaustion
     let (detection_xml, encrypted_size) = if zip_size > STREAMING_THRESHOLD {
         let streaming_result = encrypt_file_streaming(&zip_path, &encrypted_path)
             .map_err(|e| anyhow::anyhow!("Streaming encryption failed: {}", e))?;
-        
+
         encrypt_bar.set_position(zip_size);
-        
+
         let setup_name = discovery
             .setup_file()
             .relative_path
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "setup".to_string());
-        
+
         let detection_info = StreamingDetectionInfo {
             name: setup_name
                 .rsplit_once('.')
@@ -124,23 +119,21 @@ pub fn run(args: &Args) -> Result<()> {
             mac: streaming_result.mac,
             file_digest: streaming_result.file_digest,
         };
-        
+
         let xml = format::generate_detection_xml_streaming(&detection_info)?;
         (xml, streaming_result.encrypted_size)
     } else {
-        let zip_data = fs::read(&zip_path).map_err(|e| {
-            anyhow::anyhow!("Failed to read ZIP file for encryption: {}", e)
-        })?;
+        let zip_data = fs::read(&zip_path)
+            .map_err(|e| anyhow::anyhow!("Failed to read ZIP file for encryption: {}", e))?;
 
         let encryption_result = encrypt_with_keygen(&zip_data)?;
         let encrypted_size = encryption_result.encrypted_data.len() as u64;
 
         encrypt_bar.set_position(zip_size);
 
-        fs::write(&encrypted_path, &encryption_result.encrypted_data).map_err(|e| {
-            anyhow::anyhow!("Failed to write encrypted data: {}", e)
-        })?;
-        
+        fs::write(&encrypted_path, &encryption_result.encrypted_data)
+            .map_err(|e| anyhow::anyhow!("Failed to write encrypted data: {}", e))?;
+
         let setup_name = discovery
             .setup_file()
             .relative_path
@@ -176,16 +169,9 @@ pub fn run(args: &Args) -> Result<()> {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "setup".to_string());
 
-    let final_path = create_intunewin(
-        &encrypted_path,
-        &detection_xml,
-        &setup_name,
-        &args.output,
-    )?;
+    let final_path = create_intunewin(&encrypted_path, &detection_xml, &setup_name, &args.output)?;
 
-    let final_size = std::fs::metadata(&final_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let final_size = std::fs::metadata(&final_path).map(|m| m.len()).unwrap_or(0);
 
     progress.status(&format!(
         "{} Package created ({})",
@@ -196,15 +182,15 @@ pub fn run(args: &Args) -> Result<()> {
     // Stage 5: Cleanup
     let _ = fs::remove_file(&zip_path);
     let _ = fs::remove_file(&encrypted_path);
-    
+
     progress.status(&stage_msg(5, TOTAL_STAGES, "Cleanup complete"));
 
     // Final summary
     let elapsed = start_time.elapsed();
-    
+
     if !args.is_silent() {
         let throughput = discovery.total_size as f64 / elapsed.as_secs_f64() / 1_000_000.0;
-        
+
         println!();
         println!("✓ Done!");
         println!("  Output: {}", final_path.display());

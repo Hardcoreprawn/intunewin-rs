@@ -24,4 +24,3 @@ pub mod progress;
 pub use cli::Args;
 pub use error::{IntunewinError, Result};
 pub use progress::ProgressTracker;
-
