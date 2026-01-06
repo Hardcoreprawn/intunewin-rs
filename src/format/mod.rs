@@ -6,5 +6,7 @@
 pub mod detection;
 pub mod manifest;
 
-pub use detection::{generate_detection_xml, generate_detection_xml_streaming, DetectionInfo, StreamingDetectionInfo};
+pub use detection::{
+    generate_detection_xml, generate_detection_xml_streaming, DetectionInfo, StreamingDetectionInfo,
+};
 pub use manifest::{generate_manifest, ManifestFile};

@@ -72,8 +72,8 @@ pub fn create_intunewin(
 
     // Add Detection.xml - stored uncompressed as per Microsoft format
     // Path: IntuneWinPackage/Metadata/Detection.xml
-    let detection_options = SimpleFileOptions::default()
-        .compression_method(CompressionMethod::Stored);
+    let detection_options =
+        SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
 
     zip.start_file("IntuneWinPackage/Metadata/Detection.xml", detection_options)
         .map_err(|e| IntunewinError::ZipError(e.to_string()))?;
@@ -84,17 +84,21 @@ pub fn create_intunewin(
     // Add encrypted content blob
     // Path: IntuneWinPackage/Contents/IntunePackage.intunewin
     // Use stored (no compression) since the content is already encrypted
-    let content_options = SimpleFileOptions::default()
-        .compression_method(CompressionMethod::Stored);
+    let content_options =
+        SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
 
-    zip.start_file("IntuneWinPackage/Contents/IntunePackage.intunewin", content_options)
-        .map_err(|e| IntunewinError::ZipError(e.to_string()))?;
+    zip.start_file(
+        "IntuneWinPackage/Contents/IntunePackage.intunewin",
+        content_options,
+    )
+    .map_err(|e| IntunewinError::ZipError(e.to_string()))?;
 
     // Stream the encrypted file into the ZIP
-    let encrypted_file = File::open(encrypted_content).map_err(|e| IntunewinError::FileReadError {
-        path: encrypted_content.to_path_buf(),
-        source: e,
-    })?;
+    let encrypted_file =
+        File::open(encrypted_content).map_err(|e| IntunewinError::FileReadError {
+            path: encrypted_content.to_path_buf(),
+            source: e,
+        })?;
 
     let mut reader = BufReader::new(encrypted_file);
     let mut buffer = vec![0u8; 64 * 1024]; // 64KB buffer
@@ -165,12 +169,7 @@ mod tests {
         let detection_xml = r#"<ApplicationInfo>test</ApplicationInfo>"#;
         let output_dir = temp_path.join("output");
 
-        let result = create_intunewin(
-            &encrypted_path,
-            detection_xml,
-            "setup.exe",
-            &output_dir,
-        );
+        let result = create_intunewin(&encrypted_path, detection_xml, "setup.exe", &output_dir);
 
         assert!(result.is_ok());
         let output_path = result.unwrap();
@@ -193,7 +192,9 @@ mod tests {
 
         // Verify Detection.xml content
         {
-            let mut detection = archive.by_name("IntuneWinPackage/Metadata/Detection.xml").unwrap();
+            let mut detection = archive
+                .by_name("IntuneWinPackage/Metadata/Detection.xml")
+                .unwrap();
             let mut content = String::new();
             detection.read_to_string(&mut content).unwrap();
             assert_eq!(content, detection_xml);
@@ -201,7 +202,9 @@ mod tests {
 
         // Verify encrypted content
         {
-            let mut encrypted = archive.by_name("IntuneWinPackage/Contents/IntunePackage.intunewin").unwrap();
+            let mut encrypted = archive
+                .by_name("IntuneWinPackage/Contents/IntunePackage.intunewin")
+                .unwrap();
             let mut enc_content = Vec::new();
             encrypted.read_to_end(&mut enc_content).unwrap();
             assert_eq!(enc_content, b"mock encrypted content");

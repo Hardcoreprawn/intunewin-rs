@@ -44,6 +44,7 @@ jobs:
 
   test:
     name: Test Suite
+    needs: check
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -82,6 +83,7 @@ jobs:
 
   docs:
     name: Documentation
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -96,6 +98,7 @@ jobs:
 
   security:
     name: Security Audit
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -108,6 +111,7 @@ jobs:
 
   coverage:
     name: Code Coverage
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

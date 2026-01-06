@@ -35,10 +35,12 @@ fn calculate_sha256(path: &Path) -> Result<String> {
     let mut buffer = vec![0u8; 64 * 1024]; // 64KB buffer
 
     loop {
-        let bytes_read = reader.read(&mut buffer).map_err(|e| IntunewinError::FileReadError {
-            path: path.to_path_buf(),
-            source: e,
-        })?;
+        let bytes_read = reader
+            .read(&mut buffer)
+            .map_err(|e| IntunewinError::FileReadError {
+                path: path.to_path_buf(),
+                source: e,
+            })?;
 
         if bytes_read == 0 {
             break;
@@ -59,7 +61,7 @@ pub fn generate_manifest_entries(discovery: &DiscoveryResult) -> Result<Vec<Mani
         .par_iter()
         .map(|file_entry| {
             let hash = calculate_sha256(&file_entry.absolute_path)?;
-            
+
             // Use forward slashes for manifest paths
             let path = file_entry
                 .relative_path
