@@ -2,7 +2,22 @@
 name = "intunewin-rs"
 version = "0.1.0"
 edition = "2021"
-description = "High-performance IntuneWin packager"
+rust-version = "1.70"
+description = "High-performance Rust implementation of Microsoft's IntuneWin packager for Intune app deployment"
+authors = ["IntuneWin-RS Contributors"]
+license = "MIT"
+repository = "https://github.com/hardcoreprawn/intunewin-rs"
+homepage = "https://github.com/hardcoreprawn/intunewin-rs"
+readme = "README.md"
+keywords = ["intune", "microsoft", "packaging", "encryption", "windows"]
+categories = ["command-line-utilities", "compression", "cryptography"]
+exclude = [
+    "testdata/*",
+    "tests/*",
+    "docs/*",
+    ".github/*",
+    "target/*",
+]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
