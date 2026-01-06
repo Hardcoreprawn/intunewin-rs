@@ -21,7 +21,7 @@ exclude = [
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-zip = { version = "2.2", default-features = false, features = ["deflate"] }
+zip = { version = "7.0", default-features = false, features = ["deflate"] }
 flate2 = "1.0"
 aes = "0.8"
 cbc = "0.1"
