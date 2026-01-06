@@ -1,0 +1,34 @@
+# Test Data (Large)
+testdata/packages/
+testdata/output/
+testdata/benchmarks/*.etl
+testdata/benchmarks/*.etl.xml
+
+# Build artifacts
+target/
+*.lock
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+*.exe.config
+
+# Profiling
+*.etl
+*.etl.xml
+perf.data
+perf.data.old
+flamegraph.svg
+
+# Test output
+*.intunewin
+test-output/
+results/
