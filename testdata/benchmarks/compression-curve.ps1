@@ -81,7 +81,6 @@ Write-Host "Analysis:" -ForegroundColor Cyan
 Write-Host ""
 
 # Find best balance (highest throughput with reasonable compression)
-$best = $results | Sort-Object { [math]::Abs($_.Throughput_MBps - 100) } | Select-Object -First 1
 Write-Host "Baseline (compression 0): $($results[0].Time_Sec)s, $($results[0].Output_MB)MB, $($results[0].Throughput_MBps)MB/s" -ForegroundColor White
 
 for ($i = 1; $i -lt $results.Count; $i++) {
