@@ -135,6 +135,52 @@ intunewin-rs -c ./app -s setup.exe -o ./output -t 8
 intunewin-rs -c ./app -s setup.exe -o ./output --no-mmap
 ```
 
+### Compression vs Speed
+
+Most installers (.exe, .msi, .cab) are already compressed, so additional DEFLATE compression provides minimal size reduction. Here's real benchmark data:
+
+| Package | Input Size | Compression 0 | Compression 6 | Size Savings |
+|:--------|:----------:|:-------------:|:-------------:|:------------:|
+| Small (installers) | 98 MB | **0.56s** → 97.94 MB | 0.86s → 97.94 MB | 0% |
+| Medium (installer) | 254 MB | **1.58s** → 253.74 MB | 6.68s → 250.41 MB | 1.3% |
+| Large (Windows ADK) | 1.5 GB | **8.13s** → 1531 MB | 26.81s → 1510 MB | 1.4% |
+
+**Recommendation:** Use the default `--compression 0` for maximum speed. The 1-2% size reduction from compression rarely justifies the 3-4x slower packaging time.
+
+### Incremental Caching
+
+When using compression (`--compression 1-9`), caching is **automatically enabled** to speed up subsequent builds. The cache stores pre-compressed file data, so unchanged files don't need to be recompressed.
+
+```bash
+# First build with compression (cold cache): 26.8s
+intunewin-rs -c ./large-app -s setup.exe -o ./output --compression 6
+
+# Second build (warm cache): 11.2s - 2.4x faster!
+intunewin-rs -c ./large-app -s setup.exe -o ./output --compression 6
+
+# Check cache statistics
+intunewin-rs -c ./app -s setup.exe -o ./output --compression 6 --cache-stats
+
+# Force disable caching
+intunewin-rs -c ./app -s setup.exe -o ./output --compression 6 --no-cache
+
+# Clear cache before building
+intunewin-rs -c ./app -s setup.exe -o ./output --compression 6 --clear-cache
+```
+
+**Cache behavior by compression level:**
+
+| Compression | Caching | Warm Cache Speedup | Recommendation |
+|:-----------:|:-------:|:------------------:|:---------------|
+| 0 (store) | Disabled | N/A | Default - fastest for pre-compressed installers |
+| 1-9 | Auto-enabled | **2-3.5x faster** | Use for repeated builds or CI/CD |
+
+The cache is stored in `.intunewin-cache/` within the output directory and is automatically invalidated when:
+
+- Source files are modified (by size or timestamp)
+- Compression level changes
+- Files are added or removed
+
 ### Full Command Reference
 
 ```
@@ -154,6 +200,10 @@ OPTIONS:
     -t, --threads <THREADS>        Number of threads (default: auto-detect)
         --compression <LEVEL>      Compression level: 0=store (default), 1-9=DEFLATE
         --no-mmap                  Disable memory-mapped file I/O
+        --cache                    Force enable caching (auto-enabled when compression > 0)
+        --no-cache                 Disable caching (overrides auto-enable)
+        --clear-cache              Clear cache before building
+        --cache-stats              Show cache statistics
     -h, --help                     Print help
     -V, --version                  Print version
 ```
@@ -253,6 +303,9 @@ Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md)
 # Clone and setup
 git clone https://github.com/hardcoreprawn/intunewin-rs.git
 cd intunewin-rs
+
+# Enable pre-commit hooks (recommended)
+git config core.hooksPath .githooks
 
 # Run checks
 cargo fmt --check

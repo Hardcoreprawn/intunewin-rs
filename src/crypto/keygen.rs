@@ -18,7 +18,7 @@ use rand::RngCore;
 /// ```
 pub fn generate_aes_key() -> [u8; 32] {
     let mut key = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut key);
+    rand::rng().fill_bytes(&mut key);
     key
 }
 
@@ -35,7 +35,7 @@ pub fn generate_aes_key() -> [u8; 32] {
 /// ```
 pub fn generate_iv() -> [u8; 16] {
     let mut iv = [0u8; 16];
-    rand::thread_rng().fill_bytes(&mut iv);
+    rand::rng().fill_bytes(&mut iv);
     iv
 }
 
@@ -52,7 +52,7 @@ pub fn generate_iv() -> [u8; 16] {
 /// ```
 pub fn generate_mac_key() -> [u8; 32] {
     let mut key = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut key);
+    rand::rng().fill_bytes(&mut key);
     key
 }
 

@@ -8,13 +8,14 @@ use anyhow::Result;
 use std::fs;
 use std::time::Instant;
 
+use crate::cache::CacheManager;
 use crate::cli::Args;
 use crate::crypto::aes::{encrypt_file_streaming, encrypt_with_keygen};
 use crate::format;
 use crate::format::detection::{DetectionInfo, StreamingDetectionInfo};
 use crate::progress::{stage_msg, ProgressTracker};
 
-pub use compression::compress_to_inner_zip;
+pub use compression::{compress_to_inner_zip, compress_to_inner_zip_cached, CompressionResult};
 pub use discovery::{discover, format_size, DiscoveryResult, FileEntry};
 pub use packager::create_intunewin;
 
@@ -22,56 +23,118 @@ pub use packager::create_intunewin;
 /// Below this, in-memory encryption is faster
 const STREAMING_THRESHOLD: u64 = 100 * 1024 * 1024;
 
-/// Total number of pipeline stages
+/// Total number of pipeline stages (without caching)
 const TOTAL_STAGES: u32 = 5;
+
+/// Total number of pipeline stages (with caching)
+const TOTAL_STAGES_CACHED: u32 = 6;
 
 /// Main pipeline entry point
 ///
 /// Executes the full IntuneWin packaging pipeline:
 /// 1. Validate inputs
 /// 2. Collect files from source folder
-/// 3. Create ZIP archive with deflate compression
+/// 3. Create ZIP archive with deflate compression (with optional caching)
 /// 4. Encrypt the archive using AES-256-CBC
 /// 5. Generate Detection.xml metadata
 /// 6. Package everything into final .intunewin file
 /// 7. Clean up temporary files
+/// 8. Save cache (if enabled)
 pub fn run(args: &Args) -> Result<()> {
     let start_time = Instant::now();
     let progress = ProgressTracker::new(args.is_quiet());
+
+    let use_cache = args.use_cache();
+    let stages = if use_cache {
+        TOTAL_STAGES_CACHED
+    } else {
+        TOTAL_STAGES
+    };
 
     if !args.is_silent() {
         println!("IntuneWin packager v{}", env!("CARGO_PKG_VERSION"));
         println!("  Source: {}", args.content.display());
         println!("  Setup: {}", args.setup);
         println!("  Output: {}", args.output.display());
+        if use_cache {
+            if args.compression > 0 && !args.cache {
+                println!("  Caching: auto-enabled (compression > 0)");
+            } else {
+                println!("  Caching: enabled");
+            }
+        }
         println!();
     }
+
+    // Initialize cache if enabled
+    let mut cache = if use_cache {
+        let mut cache_mgr = CacheManager::with_compression_level(&args.output, args.compression)
+            .map_err(|e| anyhow::anyhow!("Cache error: {}", e))?;
+
+        // Handle --clear-cache flag
+        if args.clear_cache {
+            cache_mgr
+                .clear()
+                .map_err(|e| anyhow::anyhow!("Failed to clear cache: {}", e))?;
+            if !args.is_silent() {
+                println!("Cache cleared.");
+            }
+        }
+
+        // Handle --cache-stats flag
+        if args.cache_stats {
+            let stats = cache_mgr.stats();
+            println!("Cache Statistics:");
+            println!("  Compression level: {}", cache_mgr.compression_level());
+            println!("  Total builds: {}", stats.total_builds);
+            println!("  Cache hits: {}", stats.cache_hits);
+            println!("  Cache misses: {}", stats.cache_misses);
+            println!("  Bytes saved: {}", format_size(stats.bytes_saved));
+            if stats.cache_hits + stats.cache_misses > 0 {
+                let hit_rate = stats.cache_hits as f64
+                    / (stats.cache_hits + stats.cache_misses) as f64
+                    * 100.0;
+                println!("  Hit rate: {:.1}%", hit_rate);
+            }
+            println!();
+        }
+
+        Some(cache_mgr)
+    } else {
+        None
+    };
 
     // Stage 1: Discover files
     let discovery = discover(&args.content, &args.setup)?;
 
     progress.status(&format!(
         "{} Found {} files ({})",
-        stage_msg(1, TOTAL_STAGES, "Discovery"),
+        stage_msg(1, stages, "Discovery"),
         discovery.file_count,
         format_size(discovery.total_size)
     ));
 
-    // Stage 2: Compress to inner ZIP
-    let compress_bar = progress.create_byte_bar(
-        discovery.total_size,
-        &stage_msg(2, TOTAL_STAGES, "Compressing"),
-    );
+    // Prune cache of deleted files
+    if let Some(ref mut c) = cache {
+        c.prune(&discovery.files);
+    }
+
+    // Stage 2: Compress to inner ZIP (with optional caching)
+    let compress_bar =
+        progress.create_byte_bar(discovery.total_size, &stage_msg(2, stages, "Compressing"));
 
     let use_mmap = !args.no_mmap;
-    let zip_path = compress_to_inner_zip(
+
+    let compression_result = compress_to_inner_zip_cached(
         &discovery,
         &args.output,
         args.compression,
         use_mmap,
         Some(&compress_bar),
+        cache.as_mut(),
     )?;
 
+    let zip_path = compression_result.zip_path;
     let zip_size = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
 
     let compression_ratio = if discovery.total_size > 0 {
@@ -80,15 +143,26 @@ pub fn run(args: &Args) -> Result<()> {
         0.0
     };
 
+    // Include cache info in completion message if caching is active
+    let cache_info = if use_cache && compression_result.cache_hits > 0 {
+        format!(
+            " [cache: {} hits, {} misses]",
+            compression_result.cache_hits, compression_result.cache_misses
+        )
+    } else {
+        String::new()
+    };
+
     compress_bar.finish_with_message(format!(
-        "{} Compressed to {} ({:.1}% saved)",
-        stage_msg(2, TOTAL_STAGES, "Compression complete."),
+        "{} Compressed to {} ({:.1}% saved){}",
+        stage_msg(2, stages, "Compression complete."),
         format_size(zip_size),
-        compression_ratio
+        compression_ratio,
+        cache_info
     ));
 
     // Stage 3: Encrypt the inner ZIP
-    let encrypt_bar = progress.create_byte_bar(zip_size, &stage_msg(3, TOTAL_STAGES, "Encrypting"));
+    let encrypt_bar = progress.create_byte_bar(zip_size, &stage_msg(3, stages, "Encrypting"));
 
     let encrypted_path = args.output.join("IntunePackage.intunewin.tmp");
 
@@ -157,7 +231,7 @@ pub fn run(args: &Args) -> Result<()> {
 
     encrypt_bar.finish_with_message(format!(
         "{} Encrypted to {}",
-        stage_msg(3, TOTAL_STAGES, "Encryption complete."),
+        stage_msg(3, stages, "Encryption complete."),
         format_size(encrypted_size)
     ));
 
@@ -175,7 +249,7 @@ pub fn run(args: &Args) -> Result<()> {
 
     progress.status(&format!(
         "{} Package created ({})",
-        stage_msg(4, TOTAL_STAGES, "Packaging"),
+        stage_msg(4, stages, "Packaging"),
         format_size(final_size)
     ));
 
@@ -183,7 +257,20 @@ pub fn run(args: &Args) -> Result<()> {
     let _ = fs::remove_file(&zip_path);
     let _ = fs::remove_file(&encrypted_path);
 
-    progress.status(&stage_msg(5, TOTAL_STAGES, "Cleanup complete"));
+    progress.status(&stage_msg(5, stages, "Cleanup complete"));
+
+    // Stage 6 (if caching): Save cache
+    if let Some(ref mut c) = cache {
+        c.update_stats(
+            compression_result.cache_hits,
+            compression_result.cache_misses,
+            compression_result.bytes_saved,
+        );
+        c.save()
+            .map_err(|e| anyhow::anyhow!("Failed to save cache: {}", e))?;
+
+        progress.status(&stage_msg(6, stages, "Cache saved"));
+    }
 
     // Final summary
     let elapsed = start_time.elapsed();
