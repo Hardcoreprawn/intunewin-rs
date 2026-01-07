@@ -293,7 +293,7 @@ If a cached file is corrupted:
 
 ```
 During cache load:
-  Try to load cache/files/<hash>.compressed
+  Try to load cache/files/<hash>.cache
   If read fails or CRC check fails:
     Log warning: "Cache file corrupted, skipping"
     Recompress from source file

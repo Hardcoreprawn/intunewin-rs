@@ -50,8 +50,8 @@ Cache file: compressed_data.bin (1.5GB)
 New (Per-File):
 Cache directory:
   ├── manifest.json          (5KB - loaded once)
-  ├── files/abc123.compressed (50MB - loaded only if needed)
-  ├── files/def456.compressed (75MB - loaded only if needed)
+  ├── files/abc123.cache (50MB - loaded only if needed)
+  ├── files/def456.cache (75MB - loaded only if needed)
   └── ...
   Benefit: Load only files actually used in this build
 ```
@@ -191,7 +191,7 @@ Stage 6 (Optional): Cache Save
   Input:  Updated manifest + cached file data
   Output: Durable cache state
   ├─ Write manifest.json
-  ├─ Write cache/files/<hash>.compressed
+  ├─ Write cache/files/<hash>.cache
   └─ fsync() for durability
 ```
 
