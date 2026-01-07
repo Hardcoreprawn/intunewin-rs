@@ -97,6 +97,48 @@ foreach ($pkg in $packages) {
         $warm2CacheThroughput = if ($warm2CacheSec -gt 0) { [math]::Round($sizeMB / $warm2CacheSec, 1) } else { 0 }
         Write-Host " $warm2CacheSec s ($warm2CacheThroughput MB/s)" -ForegroundColor Green
         
+        # Verification: Compare cached and non-cached outputs
+        Write-Host "    Verifying... " -NoNewline -ForegroundColor DarkGray
+        $noCacheOutput = Join-Path $pkgOutput "no-cache.intunewin"
+        $cachedOutput = Join-Path $pkgOutput "cached.intunewin"
+        
+        # Get the actual output file (intunewin format)
+        $outputFiles = Get-ChildItem $pkgOutput -Filter "*.intunewin" -ErrorAction SilentlyContinue
+        if ($outputFiles) {
+            $actualOutput = $outputFiles[0].FullName
+            $noCacheHash = (Get-FileHash $actualOutput -Algorithm SHA256).Hash
+            
+            # Re-run non-cached to get fresh output for comparison
+            Remove-Item "$pkgOutput\*" -Force -Recurse -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Path $pkgOutput -Force | Out-Null
+            & $rustTool -c $pkg.Path -s $pkg.Setup -o $pkgOutput --compression $level --no-cache -q *>$null
+            
+            $outputFiles = Get-ChildItem $pkgOutput -Filter "*.intunewin" -ErrorAction SilentlyContinue
+            if ($outputFiles) {
+                $noCacheActualOutput = $outputFiles[0].FullName
+                $noCacheActualHash = (Get-FileHash $noCacheActualOutput -Algorithm SHA256).Hash
+                
+                # Run cached version for comparison
+                Remove-Item "$pkgOutput\*" -Force -Recurse -ErrorAction SilentlyContinue
+                New-Item -ItemType Directory -Path $pkgOutput -Force | Out-Null
+                & $rustTool -c $pkg.Path -s $pkg.Setup -o $pkgOutput --compression $level --cache -q *>$null
+                
+                $outputFiles = Get-ChildItem $pkgOutput -Filter "*.intunewin" -ErrorAction SilentlyContinue
+                if ($outputFiles) {
+                    $cachedActualOutput = $outputFiles[0].FullName
+                    $cachedHash = (Get-FileHash $cachedActualOutput -Algorithm SHA256).Hash
+                    
+                    if ($noCacheActualHash -eq $cachedHash) {
+                        Write-Host "✓ Files match" -ForegroundColor Green
+                    } else {
+                        Write-Host "✗ Files differ!" -ForegroundColor Red
+                        Write-Host "      No-cache: $noCacheActualHash" -ForegroundColor Red
+                        Write-Host "      Cached:   $cachedHash" -ForegroundColor Red
+                    }
+                }
+            }
+        }
+        
         # Calculate speedups
         $cacheOverhead = if ($noCacheSec -gt 0) { [math]::Round((($coldCacheSec - $noCacheSec) / $noCacheSec) * 100, 1) } else { 0 }
         $warmSpeedup = if ($warmCacheSec -gt 0) { [math]::Round($noCacheSec / $warmCacheSec, 2) } else { 0 }
