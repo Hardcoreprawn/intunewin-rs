@@ -244,7 +244,7 @@ impl CacheManager {
         );
     }
 
-    /// Saves the cache to disk.
+    /// Saves the cache to disk (manifest and data).
     pub fn save(&self) -> Result<()> {
         // Create cache directory if needed
         if !self.cache_dir.exists() {
@@ -259,6 +259,26 @@ impl CacheManager {
 
         // Save compressed data cache
         self.save_data_cache()?;
+
+        Ok(())
+    }
+
+    /// Saves only the cache manifest (with updated stats).
+    ///
+    /// This is more efficient than `save()` when only stats have changed
+    /// and compressed data hasn't been modified. Useful for updating
+    /// cache statistics without re-writing all the cached files.
+    pub fn save_manifest_only(&self) -> Result<()> {
+        // Create cache directory if needed
+        if !self.cache_dir.exists() {
+            fs::create_dir_all(&self.cache_dir).map_err(|e| IntunewinError::FileWriteError {
+                path: self.cache_dir.clone(),
+                source: e,
+            })?;
+        }
+
+        // Save only the manifest with updated stats
+        self.save_manifest()?;
 
         Ok(())
     }

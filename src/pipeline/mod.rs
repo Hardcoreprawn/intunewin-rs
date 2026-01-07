@@ -296,10 +296,10 @@ pub fn run(args: &Args) -> Result<()> {
             compression_result.cache_misses,
             compression_result.bytes_saved,
         );
-        // Re-save with updated stats (cache was already saved immediately after compression
-        // to ensure incremental progress is preserved even if later stages fail)
-        c.save()
-            .map_err(|e| anyhow::anyhow!("Failed to save cache: {}", e))?;
+        // Save manifest with updated stats (optimization: skip re-writing cached data files
+        // since they haven't changed, only the statistics in the manifest have changed)
+        c.save_manifest_only()
+            .map_err(|e| anyhow::anyhow!("Failed to save cache manifest: {}", e))?;
 
         progress.status(&stage_msg(6, stages, "Cache updated"));
     }
