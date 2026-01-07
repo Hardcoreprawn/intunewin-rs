@@ -81,6 +81,10 @@ jobs:
       - name: Run tests (release mode)
         run: cargo test --release --all-features
 
+      - name: Run cache integrity tests (critical)
+        run: cargo test --release --ignored cache_integrity -- --nocapture
+        continue-on-error: false
+
   docs:
     name: Documentation
     needs: check
