@@ -197,7 +197,7 @@ fn generate_minimal_test_data(test_data_path: &PathBuf) -> std::io::Result<()> {
     setup_file.write_all(&[0; 1000])?; // Minimal PE headers and sections
 
     // Pad to ~10KB to make it realistic
-    setup_file.write_all(&vec![0xAA; 9000])?;
+    setup_file.write_all(&[0xAA; 9000])?;
 
     // Create some supporting files with realistic content
     let files = vec![
