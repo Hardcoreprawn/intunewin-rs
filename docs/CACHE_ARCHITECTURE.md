@@ -18,8 +18,8 @@ The cache uses **per-file storage** instead of a monolithic binary blob:
 .intunewin-cache/
 ├── manifest.json           # Metadata for all cached files
 └── files/                  # Individual compressed file storage (named <16-hex-digits>.cache)
-    ├── <hash1>.cache       # Compressed data + header
-    ├── <hash2>.cache
+    ├── 0123456789abcdef.cache       # Compressed data + header
+    ├── fedcba9876543210.cache
     └── ...
 ```
 
@@ -72,9 +72,9 @@ Each `.cache` file in `files/` directory:
 ```text
 [10-byte header]
 ┌─────────────────────────────────────┐
-│ CRC-32 (4 bytes)                    │
-│ Original size (4 bytes, big-endian) │
-│ Compression method (2 bytes)        │
+│ CRC-32 (4 bytes, little-endian)     │
+│ Original size (4 bytes, little-endian) │
+│ Compression method (2 bytes, little-endian) │
 │ [Compressed data...]                │
 └─────────────────────────────────────┘
 ```
@@ -119,11 +119,11 @@ During compression stage, only non-cached files are processed:
 ```
 For each file:
   If is_cached and hash matches:
-    Load from cache/files/<hash>.compressed
+    Load from cache/files/<hash>.cache
   Else:
     Compress using DEFLATE algorithm
     Record in manifest
-    Save to cache/files/<hash>.compressed
+    Save to cache/files/<hash>.cache
 ```
 
 **Memory**: Lazy loading - each cached file loaded only when accessed.
@@ -153,7 +153,7 @@ After successful compression stage, cache is saved:
 
 ```
 For each newly compressed file:
-  1. Write to cache/files/<hash>.cache
+  1. Write to cache/files/<16-hex-digits>.cache
   2. Update manifest.json with metadata
   3. Call fsync() to ensure durability
 ```

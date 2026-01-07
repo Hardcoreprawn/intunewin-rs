@@ -127,7 +127,7 @@ impl CacheManager {
     /// A cache hit occurs when:
     /// - The file exists in the cache manifest
     /// - The file size matches
-    /// - The modification time matches exactly (not older, must be equal)
+    /// - The modification time matches exactly (equality check, not "older or equal")
     ///
     /// Note: Compressed data is loaded lazily on-demand to minimize memory usage
     /// for large datasets.

@@ -9,6 +9,7 @@ This session focused on updating the intunewin-rs documentation to clearly artic
 **Core Principle:** Speed and efficiency are primary goals. Compression is secondary—only beneficial when it doesn't compromise performance or stability.
 
 Updated across all documentation to emphasize:
+
 - ✅ Default behavior is compression 0 (STORE mode) for large packages
 - ✅ Cache is a performance optimization for repeated builds with compression
 - ✅ For one-time packaging, smart defaults provide optimal experience
@@ -29,12 +30,14 @@ if args.compression.is_none() {
 ```
 
 **Behavior:**
+
 - <500 MB packages → Compression 6 (good balance, enables cache)
 - ≥500 MB packages → Compression 0 (maximum speed, no memory pressure)
 - Explicit --compression flag → Overrides smart defaults
 - Fully backward compatible (MSFT tool format)
 
 **Testing:**
+
 - ✅ Small dataset (98 MB): Auto-selects compression 6, enables cache
 - ✅ Large dataset (1.5 GB): Auto-selects compression 0, disables cache
 - ✅ Explicit override: Respects user-specified compression level
@@ -45,6 +48,7 @@ if args.compression.is_none() {
 #### New Documents
 
 **[SMART_DEFAULTS.md](docs/SMART_DEFAULTS.md)** (60KB)
+
 - Complete explanation of smart defaults feature
 - Decision tree for when defaults apply
 - User experience examples
@@ -52,6 +56,7 @@ if args.compression.is_none() {
 - FAQ and future improvements
 
 **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** (40KB)
+
 - High-level design philosophy
 - Key architectural decisions with rationales
 - Pipeline stage breakdown with data flow
@@ -61,6 +66,7 @@ if args.compression.is_none() {
 - Performance characteristics and scaling
 
 **[CACHE_ARCHITECTURE.md](docs/CACHE_ARCHITECTURE.md)** (50KB)
+
 - Complete cache system design
 - Per-file streaming architecture
 - Manifest format specification
@@ -72,6 +78,7 @@ if args.compression.is_none() {
 #### Updated Documents
 
 **[README.md](README.md)**
+
 - Updated Features section to highlight smart defaults
 - Rewrote Performance section to focus on philosophy
 - Clarified compression strategy and when to use what
@@ -80,6 +87,7 @@ if args.compression.is_none() {
 - Added explicit recommendations for different scenarios
 
 **[QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)**
+
 - Added flag selection guide with decision tree
 - Documented flag compatibility (MSFT vs extensions)
 - Added 6 recommended configurations for common scenarios
@@ -90,17 +98,20 @@ if args.compression.is_none() {
 ### 4. Code Changes
 
 **CLI Changes (src/cli.rs)**
+
 - Changed `compression` from `u32` to `Option<u32>`
 - Allows distinguishing "not specified" from "explicitly 0"
 - Updated `use_cache()` to handle Option unwrapping
 
 **Main Entry Point (src/main.rs)**
+
 - Added `calculate_folder_size()` helper function
 - Auto-detects compression level before pipeline
 - Prints user-friendly auto-selection message
 - Preserves user's explicit compression choice
 
 **Pipeline (src/pipeline/mod.rs)**
+
 - Updated to handle Option<u32> compression
 - Safe unwrapping with fallback to 0
 - Updated cache initialization and messaging
@@ -108,6 +119,7 @@ if args.compression.is_none() {
 ### 5. Backward Compatibility
 
 ✅ **100% Compatible**
+
 - All MSFT tool flags work unchanged (-c, -s, -o, -a, -q, --qq, -h, -V)
 - Scripts using explicit --compression still work
 - New MSFT tool format files can be read/validated
@@ -116,16 +128,19 @@ if args.compression.is_none() {
 ### 6. Testing & Validation
 
 **Unit Tests:** ✅ All 33 tests pass
+
 ```
 test result: ok. 33 passed; 0 failed
 ```
 
 **Smart Defaults Tests:**
+
 - ✅ Small dataset (98 MB): Auto-selects compression 6 + cache
 - ✅ Large dataset (1.5 GB): Auto-selects compression 0, no cache
 - ✅ Explicit override: Respects user choice, no auto-detection
 
 **Performance:**
+
 - Small package (compression 6): 1.46s cold, cache ready
 - Large package (compression 0): 9.36s (fast and stable)
 - Explicit compression 0 on small: 0.57s (fastest possible)
@@ -181,22 +196,26 @@ test result: ok. 33 passed; 0 failed
 ### When to Use What
 
 **Just Run It (Default Smart Behavior)**
+
 ```bash
 intunewin-rs -c ./app -s setup.exe -o ./output
 # Automatically chooses best settings based on size
 ```
 
 **For Small Packages (<500MB)**
+
 - Auto-selects: Compression 6 + Cache
 - Benefit: 2-3x faster on repeated builds
 - Example: CI/CD pipelines
 
 **For Large Packages (≥500MB)**
+
 - Auto-selects: Compression 0 (store-only)
 - Benefit: Maximum speed, no memory issues
 - Example: Enterprise deployments
 
 **For Power Users**
+
 - Override with explicit flags: `--compression 0`, `--cache`, `--no-cache`
 - All flags backward compatible with Microsoft tool
 - New extensions for performance tuning
@@ -216,11 +235,13 @@ We optimize for speed and stability first. Compression is included when benefici
 ## Files Modified
 
 ### New Files Created
+
 - `docs/SMART_DEFAULTS.md` (comprehensive smart defaults guide)
 - `docs/ARCHITECTURE.md` (high-level design overview)
 - `docs/CACHE_ARCHITECTURE.md` (cache system deep dive)
 
 ### Files Modified
+
 - `README.md` (philosophy, examples, docs list)
 - `docs/QUICK_REFERENCE.md` (flag guide, recommended configs)
 - `src/main.rs` (smart defaults implementation)
@@ -228,6 +249,7 @@ We optimize for speed and stability first. Compression is included when benefici
 - `src/pipeline/mod.rs` (handle Option compression)
 
 ### Test Results
+
 - ✅ All 33 unit tests pass
 - ✅ Release build successful
 - ✅ Smart defaults tested on small/large datasets
@@ -253,17 +275,20 @@ We optimize for speed and stability first. Compression is included when benefici
 ## Next Steps (Optional)
 
 ### High Priority
+
 - ✅ Done: Smart defaults based on package size
 - ✅ Done: Documentation of architecture
 - ✅ Done: Flag selection guide for users
 
 ### Medium Priority (Future)
+
 - Add auto-detection of file types (detect already-compressed installers)
 - Progress bar integration for large packages
 - Configuration file support (intunewin.toml)
 - Detailed benchmark results comparing to MSFT tool
 
 ### Low Priority (Nice-to-have)
+
 - Distributed build support for very large packages
 - Adaptive compression based on available memory
 - Network streaming directly to cloud storage
