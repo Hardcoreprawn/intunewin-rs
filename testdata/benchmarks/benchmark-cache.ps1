@@ -100,42 +100,43 @@ foreach ($pkg in $packages) {
         
         # Verification: Compare cached and non-cached outputs
         if (-not $SkipVerification) {
-        Write-Host "    Verifying... " -NoNewline -ForegroundColor DarkGray
-        $noCacheOutput = Join-Path $pkgOutput "no-cache.intunewin"
-        $cachedOutput = Join-Path $pkgOutput "cached.intunewin"
-        
-        # Get the actual output file (intunewin format)
-        $outputFiles = Get-ChildItem $pkgOutput -Filter "*.intunewin" -ErrorAction SilentlyContinue
-        if ($outputFiles) {
-            $actualOutput = $outputFiles[0].FullName
-            $noCacheHash = (Get-FileHash $actualOutput -Algorithm SHA256).Hash
+            Write-Host "    Verifying... " -NoNewline -ForegroundColor DarkGray
+            $noCacheOutput = Join-Path $pkgOutput "no-cache.intunewin"
+            $cachedOutput = Join-Path $pkgOutput "cached.intunewin"
             
-            # Re-run non-cached to get fresh output for comparison
-            Remove-Item "$pkgOutput\*" -Force -Recurse -ErrorAction SilentlyContinue
-            New-Item -ItemType Directory -Path $pkgOutput -Force | Out-Null
-            & $rustTool -c $pkg.Path -s $pkg.Setup -o $pkgOutput --compression $level --no-cache -q *>$null
-            
+            # Get the actual output file (intunewin format)
             $outputFiles = Get-ChildItem $pkgOutput -Filter "*.intunewin" -ErrorAction SilentlyContinue
             if ($outputFiles) {
-                $noCacheActualOutput = $outputFiles[0].FullName
-                $noCacheActualHash = (Get-FileHash $noCacheActualOutput -Algorithm SHA256).Hash
+                $actualOutput = $outputFiles[0].FullName
+                $noCacheHash = (Get-FileHash $actualOutput -Algorithm SHA256).Hash
                 
-                # Run cached version for comparison
+                # Re-run non-cached to get fresh output for comparison
                 Remove-Item "$pkgOutput\*" -Force -Recurse -ErrorAction SilentlyContinue
                 New-Item -ItemType Directory -Path $pkgOutput -Force | Out-Null
-                & $rustTool -c $pkg.Path -s $pkg.Setup -o $pkgOutput --compression $level --cache -q *>$null
+                & $rustTool -c $pkg.Path -s $pkg.Setup -o $pkgOutput --compression $level --no-cache -q *>$null
                 
                 $outputFiles = Get-ChildItem $pkgOutput -Filter "*.intunewin" -ErrorAction SilentlyContinue
                 if ($outputFiles) {
-                    $cachedActualOutput = $outputFiles[0].FullName
-                    $cachedHash = (Get-FileHash $cachedActualOutput -Algorithm SHA256).Hash
+                    $noCacheActualOutput = $outputFiles[0].FullName
+                    $noCacheActualHash = (Get-FileHash $noCacheActualOutput -Algorithm SHA256).Hash
                     
-                    if ($noCacheActualHash -eq $cachedHash) {
-                        Write-Host "✓ Files match" -ForegroundColor Green
-                    } else {
-                        Write-Host "✗ Files differ!" -ForegroundColor Red
-                        Write-Host "      No-cache: $noCacheActualHash" -ForegroundColor Red
-                        Write-Host "      Cached:   $cachedHash" -ForegroundColor Red
+                    # Run cached version for comparison
+                    Remove-Item "$pkgOutput\*" -Force -Recurse -ErrorAction SilentlyContinue
+                    New-Item -ItemType Directory -Path $pkgOutput -Force | Out-Null
+                    & $rustTool -c $pkg.Path -s $pkg.Setup -o $pkgOutput --compression $level --cache -q *>$null
+                    
+                    $outputFiles = Get-ChildItem $pkgOutput -Filter "*.intunewin" -ErrorAction SilentlyContinue
+                    if ($outputFiles) {
+                        $cachedActualOutput = $outputFiles[0].FullName
+                        $cachedHash = (Get-FileHash $cachedActualOutput -Algorithm SHA256).Hash
+                        
+                        if ($noCacheActualHash -eq $cachedHash) {
+                            Write-Host "✓ Files match" -ForegroundColor Green
+                        } else {
+                            Write-Host "✗ Files differ!" -ForegroundColor Red
+                            Write-Host "      No-cache: $noCacheActualHash" -ForegroundColor Red
+                            Write-Host "      Cached:   $cachedHash" -ForegroundColor Red
+                        }
                     }
                 }
             }

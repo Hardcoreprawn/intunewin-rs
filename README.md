@@ -27,6 +27,7 @@
 - 🔐 **Secure** - AES-256-CBC encryption with HMAC-SHA256
 - 📦 **Single Binary** - No runtime dependencies
 - 🎯 **Smart Defaults** - Automatically selects best settings for your package
+- ⚠️ **BETA CACHING** - Incremental caching in testing phase (see notes below)
 
 ## 📊 Performance Philosophy
 
@@ -34,11 +35,13 @@
 
 | Package Size | No Cache | With Cache (comp≥1) | Compression Benefit |
 |:-------------|:--------:|:------------------:|:-------------------:|
-| Small (98 MB) | **0.56s** | N/A | 0% size reduction |
-| Medium (254 MB) | **1.58s** | 0.52s (3.0x) | 1.3% size reduction |
+| Small (98 MB) | **0.52s** | 0.56s (1.9x) | 0% size reduction |
+| Medium (254 MB) | **1.47s** | 1.39s (3.9x) | 1.3% size reduction |
 | Large (1.5 GB) | **8.13s** | 3.39s (2.4x) | 1.4% size reduction |
 
-> **Philosophy:** Most installers (.exe, .msi) are already compressed. We prioritize speed and stability, especially for large packages. Use `--compression 0` (store-only, default) for maximum performance. Cache provides 2-3x speedup for repeated builds with compression.
+> **Philosophy:** Most installers (.exe, .msi) are already compressed. We prioritize speed and stability, especially for large packages. Use `--compression 0` (store-only, default) for maximum performance. Cache provides 2-4x speedup for repeated builds with compression.
+
+> ⚠️ **BETA WARNING:** The incremental caching feature is currently in testing. There's a known issue where cached packages may produce different output hashes than non-cached runs. Do **not** use `--cache` in production until this is resolved. See [GitHub Issues](#github-issues) for details.
 
 ## 📦 Installation
 
@@ -155,15 +158,17 @@ Most installers (.exe, .msi, .cab) are already compressed. DEFLATE adds only 1-2
 - **≥500MB packages**: Use `--compression 0` (store-only). Speed and stability take priority.
 - **Very large packages (≥10GB)**: Must use `--compression 0` to avoid memory pressure.
 
-### Incremental Caching for Repeated Builds
+### Incremental Caching for Repeated Builds (BETA)
 
-When using compression (`--compression 1-9`), caching is **automatically enabled** to speed up subsequent builds. The cache stores pre-compressed file data in `.intunewin-cache/files/`, loading only what's needed.
+⚠️ **Status**: The caching feature is in testing phase. Known issue: cached output packages may have different file hashes than non-cached runs. **Do not use in production** until this is resolved.
+
+When using compression (`--compression 1-9`), caching can be **manually enabled** to speed up subsequent builds. The cache stores pre-compressed file data in `.intunewin-cache/files/`, loading only what's needed.
 
 ```bash
-# First build with compression (cold cache): 6.68s
+# First build with compression (cold cache): 5.5s
 intunewin-rs -c ./app -s setup.exe -o ./output --compression 6
 
-# Second build (warm cache): 2.2s - 3.0x faster!
+# Second build (warm cache): 1.4s - 4x faster!
 intunewin-rs -c ./app -s setup.exe -o ./output --compression 6
 
 # Check cache statistics
@@ -176,20 +181,14 @@ intunewin-rs -c ./app -s setup.exe -o ./output --compression 6 --no-cache
 intunewin-rs -c ./app -s setup.exe -o ./output --compression 6 --clear-cache
 ```
 
-**Cache behavior:**
+**Observed cache performance (from benchmarks):**
 
-| Compression | Caching | Cache Speedup | Memory Impact | Recommendation |
-|:-----------:|:-------:|:-------------:|:-------------:|:---------------|
-| 0 (store) | Auto-disabled | N/A | Minimal | Default - fastest, no cache overhead |
-| 1-9 | Auto-enabled | **2-3x faster** | Streaming per-file | Ideal for CI/CD pipelines |
+| Compression | No Cache | Cold Cache | Warm Cache | Speedup |
+|:-----------:|:--------:|:----------:|:----------:|:-------:|
+| 6 | 5.47s | 5.50s | 1.39s | **3.94x** |
+| 9 | 5.69s | 5.69s | 1.40s | **4.06x** |
 
-The cache automatically invalidates when:
-
-- Source files are modified (by size or timestamp)
-- Compression level changes
-- Files are added or removed
-
-**Architecture note:** Cache uses per-file storage with 500MB size limit per cached file. Large files are tracked in metadata but not cached, preventing memory exhaustion on packages >10GB.
+**⚠️ CRITICAL ISSUE**: Cached packages currently produce different file hashes than non-cached runs, indicating potential data corruption. This must be resolved before production use.
 
 ### Full Command Reference
 
