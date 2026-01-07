@@ -4,7 +4,8 @@
 param(
     [string]$TestDataPath = '.\testdata',
     [string]$OutputPath = '.\testdata\output',
-    [switch]$SkipLarge
+    [switch]$SkipLarge,
+    [switch]$SkipVerification
 )
 
 $ErrorActionPreference = 'Stop'
@@ -98,6 +99,7 @@ foreach ($pkg in $packages) {
         Write-Host " $warm2CacheSec s ($warm2CacheThroughput MB/s)" -ForegroundColor Green
         
         # Verification: Compare cached and non-cached outputs
+        if (-not $SkipVerification) {
         Write-Host "    Verifying... " -NoNewline -ForegroundColor DarkGray
         $noCacheOutput = Join-Path $pkgOutput "no-cache.intunewin"
         $cachedOutput = Join-Path $pkgOutput "cached.intunewin"
@@ -137,6 +139,8 @@ foreach ($pkg in $packages) {
                     }
                 }
             }
+        } else {
+            Write-Host "    Verifying... skipped" -ForegroundColor DarkGray
         }
         
         # Calculate speedups

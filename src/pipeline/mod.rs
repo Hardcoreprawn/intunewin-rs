@@ -296,8 +296,9 @@ pub fn run(args: &Args) -> Result<()> {
             compression_result.cache_misses,
             compression_result.bytes_saved,
         );
-        // Save manifest with updated stats (optimization: skip re-writing cached data files
-        // since they haven't changed, only the statistics in the manifest have changed)
+        // Save manifest with updated stats. After initial compression, we re-run this to update
+        // cache statistics (hit/miss counts). Using save_manifest_only() avoids redundant writes of
+        // cached compressed data files which haven't changed since the initial save.
         c.save_manifest_only()
             .map_err(|e| anyhow::anyhow!("Failed to save cache manifest: {}", e))?;
 

@@ -392,7 +392,7 @@ pub fn compress_to_inner_zip_cached(
                 .collect::<Result<Vec<_>>>()?;
 
             // Store in cache if enabled
-            if let Some(ref mut c) = cache.as_deref_mut() {
+            if let Some(c) = cache.as_mut() {
                 for (entry, file) in entries.iter().zip(uncached_files.iter()) {
                     c.record(
                         file,
