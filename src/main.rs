@@ -6,8 +6,26 @@ use intunewin_rs::cli::Args;
 use intunewin_rs::pipeline;
 
 fn main() -> Result<()> {
-    let mut args = Args::parse();
+    let args = Args::parse();
 
+    // Apply smart defaults to args before running pipeline
+    let args = apply_smart_defaults(args)?;
+
+    // Configure rayon thread pool based on --threads flag
+    if let Some(num_threads) = args.threads {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build_global()
+            .map_err(|e| anyhow::anyhow!("Failed to configure thread pool: {}", e))?;
+    }
+    // If threads not specified, rayon defaults to num_cpus (optimal for parallel work)
+
+    pipeline::run(&args)?;
+    Ok(())
+}
+
+/// Apply smart defaults to parsed arguments
+fn apply_smart_defaults(mut args: Args) -> Result<Args> {
     // Smart default: Auto-select compression level based on package size
     // This provides sensible defaults without requiring user to think about compression
     if args.compression.is_none() {
@@ -35,32 +53,69 @@ fn main() -> Result<()> {
         }
     }
 
-    // Configure rayon thread pool based on --threads flag
-    if let Some(num_threads) = args.threads {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(num_threads)
-            .build_global()
-            .map_err(|e| anyhow::anyhow!("Failed to configure thread pool: {}", e))?;
-    }
-    // If threads not specified, rayon defaults to num_cpus (optimal for parallel work)
-
-    pipeline::run(&args)?;
-    Ok(())
+    Ok(args)
 }
 
 /// Calculate total size of all files in a directory (recursively)
+///
+/// # Behavior
+/// - Symlinks are NOT followed (skipped without error)
+/// - Permission errors on individual entries are logged but don't stop the scan
+/// - Uses stack-safe iterative approach to handle large directory trees
 fn calculate_folder_size(path: &std::path::Path) -> Result<u64> {
     let mut total_size = 0u64;
+    let mut queue = vec![path.to_path_buf()];
 
-    for entry in fs::read_dir(path)? {
-        let entry = entry?;
-        let metadata = entry.metadata()?;
-
-        if metadata.is_dir() {
-            // Recursively calculate size of subdirectories
-            total_size += calculate_folder_size(&entry.path())?;
-        } else {
-            total_size += metadata.len();
+    while let Some(current_dir) = queue.pop() {
+        // Use read_dir with error handling to skip permission errors
+        match fs::read_dir(&current_dir) {
+            Ok(entries) => {
+                for entry_result in entries {
+                    match entry_result {
+                        Ok(entry) => {
+                            // Get metadata without following symlinks
+                            match entry.metadata() {
+                                Ok(metadata) => {
+                                    if metadata.is_dir() && !metadata.is_symlink() {
+                                        // Queue subdirectory for processing (iterative, not recursive)
+                                        queue.push(entry.path());
+                                    } else if metadata.is_file() {
+                                        total_size += metadata.len();
+                                    }
+                                    // Skip symlinks: they are neither followed nor counted
+                                }
+                                Err(_) => {
+                                    // Permission denied or other errors on individual file
+                                    // Log and continue scanning other files
+                                    if let Ok(file_name) = entry.file_name().into_string() {
+                                        eprintln!(
+                                            "Warning: Could not read metadata for '{}' in '{}', skipping",
+                                            file_name,
+                                            current_dir.display()
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            // Error reading entry, continue with next entry
+                            continue;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                // Permission denied on directory - log warning but continue
+                if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    eprintln!(
+                        "Warning: Permission denied reading directory '{}', skipping",
+                        current_dir.display()
+                    );
+                } else {
+                    // Other errors (not found, etc.) are still returned as errors
+                    return Err(e.into());
+                }
+            }
         }
     }
 

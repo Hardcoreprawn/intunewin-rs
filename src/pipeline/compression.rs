@@ -42,10 +42,11 @@ struct CompressedEntry {
 
 impl From<CachedCompressedData> for CompressedEntry {
     fn from(cached: CachedCompressedData) -> Self {
-        // Dereference Arc to get Vec<u8>
-        // This performs a clone only if there are other Arc references,
-        // otherwise it unwraps the Arc and moves the Vec
-        let compressed_data = (*cached.compressed_data).clone();
+        // Try to unwrap Arc to move Vec without cloning
+        // If successful: moves ownership with zero copy
+        // If it fails (other references exist): clone the Vec
+        let compressed_data = Arc::try_unwrap(cached.compressed_data)
+            .unwrap_or_else(|arc| (*arc).clone());
         Self {
             relative_path: cached.relative_path,
             compressed_data,
