@@ -82,7 +82,7 @@ impl Args {
     ///
     /// Use --cache to force enable, --no-cache to force disable.
     pub fn use_cache(&self) -> bool {
-        let compression = self.compression.unwrap_or(0); // If not specified, will be auto-detected to 0 or 6
+        let compression = self.compression.unwrap_or(0); // If None here, compression should have been auto-detected in main.rs; fall back to 0
         if self.no_cache {
             // Explicit disable always wins
             false

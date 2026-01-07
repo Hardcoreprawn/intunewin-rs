@@ -283,9 +283,9 @@ Output Folder/
 ├── package.intunewin    (final output file)
 └── .intunewin-cache/
     ├── manifest.json    (metadata: 1-10KB)
-    └── files/           (compressed files)
-        ├── abc123....compressed
-        ├── def456....compressed
+    └── files/           (compressed files, named <16-hex-digits>.cache)
+        ├── 0123456789abcdef.cache
+        ├── fedcba9876543210.cache
         └── ...
 ```
 

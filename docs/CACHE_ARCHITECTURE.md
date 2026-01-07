@@ -17,9 +17,9 @@ The cache uses **per-file storage** instead of a monolithic binary blob:
 ```
 .intunewin-cache/
 ├── manifest.json           # Metadata for all cached files
-└── files/                  # Individual compressed file storage
-    ├── <hash1>.compressed  # Compressed data + header
-    ├── <hash2>.compressed
+└── files/                  # Individual compressed file storage (named <16-hex-digits>.cache)
+    ├── <hash1>.cache       # Compressed data + header
+    ├── <hash2>.cache
     └── ...
 ```
 
@@ -67,7 +67,7 @@ Stores metadata about all cached files:
 
 ### Cached File Format
 
-Each `.compressed` file in `files/` directory:
+Each `.cache` file in `files/` directory:
 
 ```text
 [10-byte header]
@@ -153,7 +153,7 @@ After successful compression stage, cache is saved:
 
 ```
 For each newly compressed file:
-  1. Write to cache/files/<hash>.compressed
+  1. Write to cache/files/<hash>.cache
   2. Update manifest.json with metadata
   3. Call fsync() to ensure durability
 ```

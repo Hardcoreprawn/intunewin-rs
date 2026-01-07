@@ -69,7 +69,9 @@ pub fn run(args: &Args) -> Result<()> {
 
     // Initialize cache if enabled
     let mut cache = if use_cache {
-        let compression = args.compression.unwrap_or(0); // Safe after main.rs auto-detection
+        let compression = args
+            .compression
+            .expect("Compression should be set by main.rs auto-detection");
         let mut cache_mgr = CacheManager::with_compression_level(&args.output, compression)
             .map_err(|e| anyhow::anyhow!("Cache error: {}", e))?;
 
@@ -142,7 +144,9 @@ pub fn run(args: &Args) -> Result<()> {
         progress.create_byte_bar(discovery.total_size, &stage_msg(2, stages, "Compressing"));
 
     let use_mmap = !args.no_mmap;
-    let compression = args.compression.unwrap_or(0); // Safe after main.rs auto-detection
+    let compression = args
+        .compression
+        .expect("Compression should be set by main.rs auto-detection");
 
     let compression_result = compress_to_inner_zip_cached(
         &discovery,
