@@ -189,9 +189,8 @@ fn generate_minimal_test_data(test_data_path: &PathBuf) -> std::io::Result<()> {
     // Write minimal PE header (MZ header)
     // This is just enough to be recognized as PE format
     setup_file.write_all(b"MZ")?; // DOS header signature
-    setup_file.write_all(&[0; 58])?; // Minimal DOS header
-    setup_file.write_all(&[0x40, 0, 0, 0])?; // PE offset at 0x3C
-    setup_file.write_all(&[0; 64 - 62])?;
+    setup_file.write_all(&[0; 58])?; // Minimal DOS header padding up to e_lfanew
+    setup_file.write_all(&[0x40, 0, 0, 0])?; // PE offset at 0x3C (60 decimal)
 
     // PE signature and minimal headers
     setup_file.write_all(b"PE\0\0")?; // PE signature
