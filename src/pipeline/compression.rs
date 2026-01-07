@@ -6,6 +6,9 @@
 //!
 //! Memory optimization: Process files in batches based on total uncompressed size,
 //! writing each batch to disk before processing the next.
+//!
+//! Caching support: When enabled, stores compressed file data to avoid
+//! recompressing unchanged files on subsequent builds.
 
 use std::fs::File;
 use std::io::{Seek, Write};
@@ -18,6 +21,7 @@ use flate2::Compression;
 use indicatif::ProgressBar;
 use rayon::prelude::*;
 
+use crate::cache::{CacheManager, CacheResult, CachedCompressedData};
 use crate::error::{IntunewinError, Result};
 use crate::io::read_file_smart;
 use crate::pipeline::discovery::{DiscoveryResult, FileEntry};
@@ -34,6 +38,23 @@ struct CompressedEntry {
     crc32: u32,
     /// Compression method: 8 = DEFLATE, 0 = STORED (no compression)
     compression_method: u16,
+}
+
+impl From<CachedCompressedData> for CompressedEntry {
+    fn from(cached: CachedCompressedData) -> Self {
+        // Try to unwrap Arc to move Vec without cloning
+        // If successful: moves ownership with zero copy
+        // If it fails (other references exist): clone the Vec
+        let compressed_data =
+            Arc::try_unwrap(cached.compressed_data).unwrap_or_else(|arc| (*arc).clone());
+        Self {
+            relative_path: cached.relative_path,
+            compressed_data,
+            uncompressed_size: cached.uncompressed_size,
+            crc32: cached.crc32,
+            compression_method: cached.compression_method,
+        }
+    }
 }
 
 /// Compress a single file (runs on worker thread)
@@ -259,7 +280,19 @@ fn partition_into_batches(files: &[FileEntry], max_batch_bytes: u64) -> Vec<Vec<
     batches
 }
 
-/// Creates the inner ZIP file with parallel compression and streaming writes.
+/// Result of compression with caching statistics
+pub struct CompressionResult {
+    /// Path to the created ZIP file
+    pub zip_path: PathBuf,
+    /// Number of cache hits
+    pub cache_hits: usize,
+    /// Number of cache misses (files that needed compression)
+    pub cache_misses: usize,
+    /// Bytes saved by cache (uncompressed size of cached files)
+    pub bytes_saved: u64,
+}
+
+/// Creates the inner ZIP file with parallel compression, streaming writes, and optional caching.
 ///
 /// Memory optimization: Files are processed in batches. Each batch is compressed
 /// in parallel, written to disk, then freed from memory before the next batch.
@@ -270,13 +303,15 @@ fn partition_into_batches(files: &[FileEntry], max_batch_bytes: u64) -> Vec<Vec<
 /// * `compression_level` - 0 = STORE only (fastest), 1-9 = DEFLATE level
 /// * `use_mmap` - Whether to use memory-mapped I/O for large files
 /// * `progress_bar` - Optional progress bar to update during compression
-pub fn compress_to_inner_zip(
+/// * `cache` - Optional cache manager for incremental builds
+pub fn compress_to_inner_zip_cached(
     discovery: &DiscoveryResult,
     output_path: &Path,
     compression_level: u32,
     use_mmap: bool,
     progress_bar: Option<&ProgressBar>,
-) -> Result<PathBuf> {
+    mut cache: Option<&mut CacheManager>,
+) -> Result<CompressionResult> {
     if !output_path.exists() {
         std::fs::create_dir_all(output_path).map_err(|e| IntunewinError::FileWriteError {
             path: output_path.to_path_buf(),
@@ -296,28 +331,120 @@ pub fn compress_to_inner_zip(
     // Create streaming ZIP writer
     let mut zip_writer = StreamingZipWriter::new(&zip_path)?;
 
-    // Partition files into memory-bounded batches
-    let batches = partition_into_batches(&discovery.files, BATCH_SIZE_BYTES);
-
     // Track bytes processed across all threads
     let progress_bytes = Arc::new(AtomicU64::new(0));
 
+    // Cache statistics
+    let mut cache_hits = 0usize;
+    let mut cache_misses = 0usize;
+    let mut bytes_saved = 0u64;
+
+    // Partition files into memory-bounded batches
+    let batches = partition_into_batches(&discovery.files, BATCH_SIZE_BYTES);
+
     for batch in batches {
-        // PHASE 1: Parallel compression of this batch
-        let pb = progress_bar;
-        let bytes_ref = &progress_bytes;
+        // Separate files into cached and uncached, collecting cached data in one pass
+        let (cached_entries, uncached_files): (Vec<_>, Vec<_>) = if let Some(ref c) = cache {
+            let mut cached_data = Vec::new();
+            let mut uncached = Vec::new();
 
-        let entries: Vec<CompressedEntry> = batch
-            .par_iter()
-            .map(|f| compress_file(f, compression_level, use_mmap, Some(bytes_ref), pb))
-            .collect::<Result<Vec<_>>>()?;
+            for f in batch {
+                match c.check(f) {
+                    CacheResult::Hit(data) => {
+                        cached_data.push(data);
+                    }
+                    CacheResult::Miss => {
+                        uncached.push(f);
+                    }
+                }
+            }
 
-        // PHASE 2: Write batch to ZIP (releases memory for next batch)
-        zip_writer.write_batch(entries)?;
+            (cached_data, uncached)
+        } else {
+            (Vec::new(), batch.clone())
+        };
+
+        // Process cached files (no double lookup)
+        for cached_data in cached_entries {
+            cache_hits += 1;
+            bytes_saved += cached_data.uncompressed_size as u64;
+
+            // Update progress
+            if let Some(bar) = progress_bar {
+                progress_bytes.fetch_add(cached_data.uncompressed_size as u64, Ordering::Relaxed);
+                bar.set_position(progress_bytes.load(Ordering::Relaxed));
+            }
+
+            // Write cached data to ZIP
+            zip_writer.write_entry(cached_data.into())?;
+        }
+
+        // PHASE 1: Parallel compression of uncached files
+        if !uncached_files.is_empty() {
+            cache_misses += uncached_files.len();
+
+            let pb = progress_bar;
+            let bytes_ref = &progress_bytes;
+
+            let entries: Vec<CompressedEntry> = uncached_files
+                .par_iter()
+                .map(|f| compress_file(f, compression_level, use_mmap, Some(bytes_ref), pb))
+                .collect::<Result<Vec<_>>>()?;
+
+            // Store in cache if enabled
+            if let Some(ref mut c) = cache.as_deref_mut() {
+                for (entry, file) in entries.iter().zip(uncached_files.iter()) {
+                    c.record(
+                        file,
+                        entry.compressed_data.clone(),
+                        entry.crc32,
+                        entry.uncompressed_size,
+                        entry.compression_method,
+                    );
+                }
+            }
+
+            // PHASE 2: Write batch to ZIP (releases memory for next batch)
+            zip_writer.write_batch(entries)?;
+        }
     }
 
     // Finalize ZIP file
     zip_writer.finish()?;
 
-    Ok(zip_path)
+    Ok(CompressionResult {
+        zip_path,
+        cache_hits,
+        cache_misses,
+        bytes_saved,
+    })
+}
+
+/// Creates the inner ZIP file with parallel compression and streaming writes.
+///
+/// Memory optimization: Files are processed in batches. Each batch is compressed
+/// in parallel, written to disk, then freed from memory before the next batch.
+///
+/// # Arguments
+/// * `discovery` - The discovery result containing files to compress
+/// * `output_path` - Directory where the ZIP will be created
+/// * `compression_level` - 0 = STORE only (fastest), 1-9 = DEFLATE level
+/// * `use_mmap` - Whether to use memory-mapped I/O for large files
+/// * `progress_bar` - Optional progress bar to update during compression
+pub fn compress_to_inner_zip(
+    discovery: &DiscoveryResult,
+    output_path: &Path,
+    compression_level: u32,
+    use_mmap: bool,
+    progress_bar: Option<&ProgressBar>,
+) -> Result<PathBuf> {
+    let result = compress_to_inner_zip_cached(
+        discovery,
+        output_path,
+        compression_level,
+        use_mmap,
+        progress_bar,
+        None,
+    )?;
+    Ok(result.zip_path)
 }

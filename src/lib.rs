@@ -12,7 +12,9 @@
 //! - Memory-mapped file I/O for large files
 //! - Configurable compression levels
 //! - Progress indication
+//! - Incremental caching for faster subsequent builds
 
+pub mod cache;
 pub mod cli;
 pub mod crypto;
 pub mod error;
