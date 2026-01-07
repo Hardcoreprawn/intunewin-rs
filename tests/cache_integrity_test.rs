@@ -3,6 +3,10 @@
 ///
 /// This test catches the critical issue where --cache flag produces different
 /// output hashes than non-cached runs, which would indicate data corruption.
+///
+/// NOTE: This test requires test data (testdata/packages/small/) to be present.
+/// Test data is not included in the git repository due to size constraints.
+/// Run locally with: cargo test --release --ignored cache_integrity -- --nocapture
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::PathBuf;
