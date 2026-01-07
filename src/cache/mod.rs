@@ -28,6 +28,7 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use crate::error::{IntunewinError, Result};
@@ -36,11 +37,15 @@ use crate::pipeline::discovery::FileEntry;
 /// Cache directory name
 const CACHE_DIR: &str = ".intunewin-cache";
 
-/// Compressed data cache file
-const DATA_CACHE_FILE: &str = "compressed_data.bin";
+/// Subdirectory for individual compressed file cache entries
+const DATA_CACHE_DIR: &str = "files";
 
 /// Manifest file name
 const MANIFEST_FILE: &str = "manifest.json";
+
+/// Maximum size for a single cached file (500 MB)
+/// Files larger than this are not cached to avoid memory exhaustion
+const MAX_CACHED_FILE_SIZE: u64 = 500 * 1024 * 1024;
 
 /// Manages the incremental build cache
 pub struct CacheManager {
@@ -54,8 +59,8 @@ pub struct CacheManager {
 pub struct CachedCompressedData {
     /// Relative path (key)
     pub relative_path: String,
-    /// Pre-compressed data
-    pub compressed_data: Vec<u8>,
+    /// Pre-compressed data (Arc for efficient sharing without cloning)
+    pub compressed_data: Arc<Vec<u8>>,
     /// CRC32 of original uncompressed data
     pub crc32: u32,
     /// Original uncompressed size
@@ -122,7 +127,10 @@ impl CacheManager {
     /// A cache hit occurs when:
     /// - The file exists in the cache manifest
     /// - The file size matches
-    /// - The modification time matches (or is older)
+    /// - The modification time matches exactly (not older, must be equal)
+    ///
+    /// Note: Compressed data is loaded lazily on-demand to minimize memory usage
+    /// for large datasets.
     pub fn check(&self, entry: &FileEntry) -> CacheResult {
         let key = entry.relative_path.to_string_lossy().replace('\\', "/");
 
@@ -140,9 +148,9 @@ impl CacheManager {
 
                 // Check if file is unchanged
                 if cached_entry.size == current_size && cached_entry.mtime == current_mtime {
-                    // Try to get compressed data from cache
-                    if let Some(data) = self.data_cache.get(&key) {
-                        return CacheResult::Hit(data.clone());
+                    // Load compressed data on-demand
+                    if let Ok(Some(data)) = Self::load_cached_file(&self.cache_dir, &key) {
+                        return CacheResult::Hit(data);
                     }
                 }
             }
@@ -160,6 +168,40 @@ impl CacheManager {
         uncompressed_size: u32,
         compression_method: u16,
     ) {
+        // Skip caching very large files to avoid memory exhaustion
+        // The manifest is still updated for metadata tracking
+        if compressed_data.len() as u64 > MAX_CACHED_FILE_SIZE {
+            let key = entry.relative_path.to_string_lossy().replace('\\', "/");
+
+            // Get current metadata
+            let (size, mtime) = fs::metadata(&entry.absolute_path)
+                .map(|m| {
+                    let size = m.len();
+                    let mtime = m
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    (size, mtime)
+                })
+                .unwrap_or((entry.size, 0));
+
+            // Update manifest only (no data cache)
+            self.manifest.entries.insert(
+                key.clone(),
+                CacheEntry {
+                    relative_path: key,
+                    size,
+                    mtime,
+                    crc32,
+                    compressed_size: compressed_data.len() as u64,
+                    compression_method,
+                },
+            );
+            return;
+        }
+
         let key = entry.relative_path.to_string_lossy().replace('\\', "/");
 
         // Get current metadata
@@ -189,12 +231,12 @@ impl CacheManager {
             },
         );
 
-        // Store compressed data
+        // Store compressed data with Arc to avoid cloning on cache hits
         self.data_cache.insert(
             key.clone(),
             CachedCompressedData {
                 relative_path: key,
-                compressed_data,
+                compressed_data: Arc::new(compressed_data),
                 crc32,
                 uncompressed_size,
                 compression_method,
@@ -236,7 +278,8 @@ impl CacheManager {
 
     /// Clears the cache.
     pub fn clear(&mut self) -> Result<()> {
-        self.manifest = CacheManifest::new();
+        let compression_level = self.manifest.compression_level;
+        self.manifest = CacheManifest::with_compression_level(compression_level);
         self.data_cache.clear();
 
         if self.cache_dir.exists() {
@@ -294,141 +337,123 @@ impl CacheManager {
         Ok(())
     }
 
-    fn load_data_cache(cache_dir: &Path) -> Result<HashMap<String, CachedCompressedData>> {
-        let data_path = cache_dir.join(DATA_CACHE_FILE);
-        if !data_path.exists() {
-            return Ok(HashMap::new());
+    fn load_data_cache(_cache_dir: &Path) -> Result<HashMap<String, CachedCompressedData>> {
+        // With the new per-file cache design, we don't pre-load all data.
+        // Instead, individual files are loaded on-demand via load_cached_file().
+        // This returns an empty map - data is loaded lazily.
+        Ok(HashMap::new())
+    }
+
+    /// Load a specific file's cached data on-demand
+    fn load_cached_file(
+        cache_dir: &Path,
+        relative_path: &str,
+    ) -> Result<Option<CachedCompressedData>> {
+        let files_dir = cache_dir.join(DATA_CACHE_DIR);
+        if !files_dir.exists() {
+            return Ok(None);
         }
 
-        let mut file = File::open(&data_path).map_err(|e| IntunewinError::FileReadError {
-            path: data_path.clone(),
+        // Create a safe filename from the relative path
+        let safe_name = Self::path_to_cache_filename(relative_path);
+        let file_path = files_dir.join(&safe_name);
+
+        if !file_path.exists() {
+            return Ok(None);
+        }
+
+        // Read the small header to get metadata
+        let mut file = File::open(&file_path).map_err(|e| IntunewinError::FileReadError {
+            path: file_path.clone(),
             source: e,
         })?;
 
-        let mut data = Vec::new();
-        file.read_to_end(&mut data)
+        // Read metadata: crc32 (4) + uncompressed_size (4) + compression_method (2)
+        let mut header = [0u8; 10];
+        file.read_exact(&mut header)
             .map_err(|e| IntunewinError::FileReadError {
-                path: data_path.clone(),
+                path: file_path.clone(),
                 source: e,
             })?;
 
-        Self::deserialize_data_cache(&data)
+        let crc32 = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
+        let uncompressed_size = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+        let compression_method = u16::from_le_bytes([header[8], header[9]]);
+
+        // Read the compressed data
+        let mut compressed_data = Vec::new();
+        file.read_to_end(&mut compressed_data)
+            .map_err(|e| IntunewinError::FileReadError {
+                path: file_path,
+                source: e,
+            })?;
+
+        Ok(Some(CachedCompressedData {
+            relative_path: relative_path.to_string(),
+            compressed_data: Arc::new(compressed_data),
+            crc32,
+            uncompressed_size,
+            compression_method,
+        }))
+    }
+
+    /// Convert a relative path to a safe cache filename (hash-based)
+    fn path_to_cache_filename(relative_path: &str) -> String {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        relative_path.hash(&mut hasher);
+        let hash = hasher.finish();
+        format!("{:016x}.cache", hash)
     }
 
     fn save_data_cache(&self) -> Result<()> {
-        let data_path = self.cache_dir.join(DATA_CACHE_FILE);
-        let data = self.serialize_data_cache();
-
-        let mut file = File::create(&data_path).map_err(|e| IntunewinError::FileWriteError {
-            path: data_path.clone(),
-            source: e,
-        })?;
-
-        file.write_all(&data)
-            .map_err(|e| IntunewinError::FileWriteError {
-                path: data_path,
+        let files_dir = self.cache_dir.join(DATA_CACHE_DIR);
+        if !files_dir.exists() {
+            fs::create_dir_all(&files_dir).map_err(|e| IntunewinError::FileWriteError {
+                path: files_dir.clone(),
                 source: e,
             })?;
+        }
+
+        // Save each cached file separately
+        for entry in self.data_cache.values() {
+            let safe_name = Self::path_to_cache_filename(&entry.relative_path);
+            let file_path = files_dir.join(&safe_name);
+
+            let mut file =
+                File::create(&file_path).map_err(|e| IntunewinError::FileWriteError {
+                    path: file_path.clone(),
+                    source: e,
+                })?;
+
+            // Write metadata header: crc32 (4) + uncompressed_size (4) + compression_method (2)
+            file.write_all(&entry.crc32.to_le_bytes()).map_err(|e| {
+                IntunewinError::FileWriteError {
+                    path: file_path.clone(),
+                    source: e,
+                }
+            })?;
+            file.write_all(&entry.uncompressed_size.to_le_bytes())
+                .map_err(|e| IntunewinError::FileWriteError {
+                    path: file_path.clone(),
+                    source: e,
+                })?;
+            file.write_all(&entry.compression_method.to_le_bytes())
+                .map_err(|e| IntunewinError::FileWriteError {
+                    path: file_path.clone(),
+                    source: e,
+                })?;
+
+            // Write compressed data
+            file.write_all(&entry.compressed_data)
+                .map_err(|e| IntunewinError::FileWriteError {
+                    path: file_path,
+                    source: e,
+                })?;
+        }
 
         Ok(())
-    }
-
-    /// Serialize data cache to binary format.
-    ///
-    /// Format per entry:
-    /// - u32: path length
-    /// - bytes: path bytes
-    /// - u32: crc32
-    /// - u32: uncompressed_size
-    /// - u16: compression_method
-    /// - u32: compressed_data length
-    /// - bytes: compressed_data
-    fn serialize_data_cache(&self) -> Vec<u8> {
-        let mut data = Vec::new();
-
-        // Write entry count
-        data.extend_from_slice(&(self.data_cache.len() as u32).to_le_bytes());
-
-        for entry in self.data_cache.values() {
-            let path_bytes = entry.relative_path.as_bytes();
-
-            data.extend_from_slice(&(path_bytes.len() as u32).to_le_bytes());
-            data.extend_from_slice(path_bytes);
-            data.extend_from_slice(&entry.crc32.to_le_bytes());
-            data.extend_from_slice(&entry.uncompressed_size.to_le_bytes());
-            data.extend_from_slice(&entry.compression_method.to_le_bytes());
-            data.extend_from_slice(&(entry.compressed_data.len() as u32).to_le_bytes());
-            data.extend_from_slice(&entry.compressed_data);
-        }
-
-        data
-    }
-
-    fn deserialize_data_cache(data: &[u8]) -> Result<HashMap<String, CachedCompressedData>> {
-        let mut cache = HashMap::new();
-        let mut offset = 0;
-
-        if data.len() < 4 {
-            return Ok(cache);
-        }
-
-        let entry_count = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
-        offset += 4;
-
-        for _ in 0..entry_count {
-            if offset + 4 > data.len() {
-                break;
-            }
-
-            let path_len =
-                u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
-            offset += 4;
-
-            if offset + path_len > data.len() {
-                break;
-            }
-
-            let path = String::from_utf8_lossy(&data[offset..offset + path_len]).to_string();
-            offset += path_len;
-
-            if offset + 14 > data.len() {
-                break;
-            }
-
-            let crc32 = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
-            offset += 4;
-
-            let uncompressed_size =
-                u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
-            offset += 4;
-
-            let compression_method =
-                u16::from_le_bytes(data[offset..offset + 2].try_into().unwrap());
-            offset += 2;
-
-            let compressed_len =
-                u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
-            offset += 4;
-
-            if offset + compressed_len > data.len() {
-                break;
-            }
-
-            let compressed_data = data[offset..offset + compressed_len].to_vec();
-            offset += compressed_len;
-
-            cache.insert(
-                path.clone(),
-                CachedCompressedData {
-                    relative_path: path,
-                    compressed_data,
-                    crc32,
-                    uncompressed_size,
-                    compression_method,
-                },
-            );
-        }
-
-        Ok(cache)
     }
 }

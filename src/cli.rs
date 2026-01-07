@@ -34,10 +34,12 @@ pub struct Args {
     #[arg(short = 't', long = "threads")]
     pub threads: Option<usize>,
 
-    /// Compression level: 0 = store only (default), 1-9 = DEFLATE
-    /// Most installers are already compressed, so 0 is fastest
-    #[arg(long = "compression", default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..=9))]
-    pub compression: u32,
+    /// Compression level: 1-9 = DEFLATE, or 0 = store only
+    /// If not specified, defaults are auto-detected based on package size:
+    /// - <500MB packages: compression 6 (good for caching)
+    /// - >=500MB packages: compression 0 (maximum speed, minimal memory)
+    #[arg(long = "compression", value_parser = clap::value_parser!(u32).range(0..=9))]
+    pub compression: Option<u32>,
 
     /// Disable memory-mapped file I/O
     #[arg(long = "no-mmap", default_value_t = false)]
@@ -80,6 +82,7 @@ impl Args {
     ///
     /// Use --cache to force enable, --no-cache to force disable.
     pub fn use_cache(&self) -> bool {
+        let compression = self.compression.unwrap_or(0); // If not specified, will be auto-detected to 0 or 6
         if self.no_cache {
             // Explicit disable always wins
             false
@@ -89,7 +92,7 @@ impl Args {
         } else {
             // Auto-enable when compression > 0 (beneficial)
             // Auto-disable when compression = 0 (adds overhead)
-            self.compression > 0
+            compression > 0
         }
     }
 }

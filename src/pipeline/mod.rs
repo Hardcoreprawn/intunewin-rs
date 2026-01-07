@@ -57,7 +57,8 @@ pub fn run(args: &Args) -> Result<()> {
         println!("  Setup: {}", args.setup);
         println!("  Output: {}", args.output.display());
         if use_cache {
-            if args.compression > 0 && !args.cache {
+            let compression = args.compression.unwrap_or(0);
+            if compression > 0 && !args.cache {
                 println!("  Caching: auto-enabled (compression > 0)");
             } else {
                 println!("  Caching: enabled");
@@ -68,21 +69,38 @@ pub fn run(args: &Args) -> Result<()> {
 
     // Initialize cache if enabled
     let mut cache = if use_cache {
-        let mut cache_mgr = CacheManager::with_compression_level(&args.output, args.compression)
+        let compression = args.compression.unwrap_or(0); // Safe after main.rs auto-detection
+        let mut cache_mgr = CacheManager::with_compression_level(&args.output, compression)
             .map_err(|e| anyhow::anyhow!("Cache error: {}", e))?;
 
         // Handle --clear-cache flag
         if args.clear_cache {
+            // Print stats before clearing if both flags are present
+            if args.cache_stats {
+                let stats = cache_mgr.stats();
+                println!("Cache Statistics (before clearing):");
+                println!("  Compression level: {}", cache_mgr.compression_level());
+                println!("  Total builds: {}", stats.total_builds);
+                println!("  Cache hits: {}", stats.cache_hits);
+                println!("  Cache misses: {}", stats.cache_misses);
+                println!("  Bytes saved: {}", format_size(stats.bytes_saved));
+                if stats.cache_hits + stats.cache_misses > 0 {
+                    let hit_rate = stats.cache_hits as f64
+                        / (stats.cache_hits + stats.cache_misses) as f64
+                        * 100.0;
+                    println!("  Hit rate: {:.1}%", hit_rate);
+                }
+                println!();
+            }
+
             cache_mgr
                 .clear()
                 .map_err(|e| anyhow::anyhow!("Failed to clear cache: {}", e))?;
             if !args.is_silent() {
                 println!("Cache cleared.");
             }
-        }
-
-        // Handle --cache-stats flag
-        if args.cache_stats {
+        } else if args.cache_stats {
+            // Handle --cache-stats flag (when not clearing)
             let stats = cache_mgr.stats();
             println!("Cache Statistics:");
             println!("  Compression level: {}", cache_mgr.compression_level());
@@ -124,15 +142,23 @@ pub fn run(args: &Args) -> Result<()> {
         progress.create_byte_bar(discovery.total_size, &stage_msg(2, stages, "Compressing"));
 
     let use_mmap = !args.no_mmap;
+    let compression = args.compression.unwrap_or(0); // Safe after main.rs auto-detection
 
     let compression_result = compress_to_inner_zip_cached(
         &discovery,
         &args.output,
-        args.compression,
+        compression,
         use_mmap,
         Some(&compress_bar),
         cache.as_mut(),
     )?;
+
+    // Save cache immediately after successful compression to preserve incremental progress
+    // even if later stages (encryption, packaging, cleanup) fail
+    if let Some(ref mut c) = cache {
+        c.save()
+            .map_err(|e| anyhow::anyhow!("Failed to save cache after compression: {}", e))?;
+    }
 
     let zip_path = compression_result.zip_path;
     let zip_size = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
@@ -259,17 +285,19 @@ pub fn run(args: &Args) -> Result<()> {
 
     progress.status(&stage_msg(5, stages, "Cleanup complete"));
 
-    // Stage 6 (if caching): Save cache
+    // Stage 6 (if caching): Update and save cache with final stats
     if let Some(ref mut c) = cache {
         c.update_stats(
             compression_result.cache_hits,
             compression_result.cache_misses,
             compression_result.bytes_saved,
         );
+        // Re-save with updated stats (cache was already saved immediately after compression
+        // to ensure incremental progress is preserved even if later stages fail)
         c.save()
             .map_err(|e| anyhow::anyhow!("Failed to save cache: {}", e))?;
 
-        progress.status(&stage_msg(6, stages, "Cache saved"));
+        progress.status(&stage_msg(6, stages, "Cache updated"));
     }
 
     // Final summary

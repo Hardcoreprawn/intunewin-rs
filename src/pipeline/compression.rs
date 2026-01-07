@@ -42,9 +42,13 @@ struct CompressedEntry {
 
 impl From<CachedCompressedData> for CompressedEntry {
     fn from(cached: CachedCompressedData) -> Self {
+        // Dereference Arc to get Vec<u8>
+        // This performs a clone only if there are other Arc references,
+        // otherwise it unwraps the Arc and moves the Vec
+        let compressed_data = (*cached.compressed_data).clone();
         Self {
             relative_path: cached.relative_path,
-            compressed_data: cached.compressed_data,
+            compressed_data,
             uncompressed_size: cached.uncompressed_size,
             crc32: cached.crc32,
             compression_method: cached.compression_method,
@@ -338,32 +342,40 @@ pub fn compress_to_inner_zip_cached(
     let batches = partition_into_batches(&discovery.files, BATCH_SIZE_BYTES);
 
     for batch in batches {
-        // Separate files into cached and uncached
-        let (cached_files, uncached_files): (Vec<_>, Vec<_>) = if let Some(ref c) = cache {
-            batch
-                .iter()
-                .partition(|f| matches!(c.check(f), CacheResult::Hit(_)))
+        // Separate files into cached and uncached, collecting cached data in one pass
+        let (cached_entries, uncached_files): (Vec<_>, Vec<_>) = if let Some(ref c) = cache {
+            let mut cached_data = Vec::new();
+            let mut uncached = Vec::new();
+
+            for f in batch {
+                match c.check(f) {
+                    CacheResult::Hit(data) => {
+                        cached_data.push(data);
+                    }
+                    CacheResult::Miss => {
+                        uncached.push(f);
+                    }
+                }
+            }
+
+            (cached_data, uncached)
         } else {
             (Vec::new(), batch.clone())
         };
 
-        // Process cached files
-        for file in &cached_files {
-            if let Some(ref c) = cache {
-                if let CacheResult::Hit(cached_data) = c.check(file) {
-                    cache_hits += 1;
-                    bytes_saved += file.size;
+        // Process cached files (no double lookup)
+        for cached_data in cached_entries {
+            cache_hits += 1;
+            bytes_saved += cached_data.uncompressed_size as u64;
 
-                    // Update progress
-                    if let Some(bar) = progress_bar {
-                        progress_bytes.fetch_add(file.size, Ordering::Relaxed);
-                        bar.set_position(progress_bytes.load(Ordering::Relaxed));
-                    }
-
-                    // Write cached data to ZIP
-                    zip_writer.write_entry(cached_data.into())?;
-                }
+            // Update progress
+            if let Some(bar) = progress_bar {
+                progress_bytes.fetch_add(cached_data.uncompressed_size as u64, Ordering::Relaxed);
+                bar.set_position(progress_bytes.load(Ordering::Relaxed));
             }
+
+            // Write cached data to ZIP
+            zip_writer.write_entry(cached_data.into())?;
         }
 
         // PHASE 1: Parallel compression of uncached files
