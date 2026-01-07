@@ -8,6 +8,12 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::process::Command;
 
+fn intunewin_bin() -> &'static str {
+    // Cargo exposes the built binary path to integration tests.
+    // This avoids relying on a separately-built `target/release` binary.
+    env!("CARGO_BIN_EXE_intunewin-rs")
+}
+
 fn get_file_hash(path: &PathBuf) -> String {
     use sha2::{Digest, Sha256};
 
@@ -65,7 +71,7 @@ fn test_cache_for_compression(
 
     // Run 1: Without cache
     println!("  Run 1: Building without cache...");
-    let status = Command::new("./target/release/intunewin-rs")
+    let status = Command::new(intunewin_bin())
         .arg("-c")
         .arg(test_data_path)
         .arg("-s")
@@ -74,30 +80,34 @@ fn test_cache_for_compression(
         .arg(output_dir)
         .arg("--compression")
         .arg(compression_level.to_string())
+        .arg("--keep-temp")
         .arg("-q")
         .status()
         .expect("Failed to run intunewin-rs");
 
     assert!(status.success(), "First build (no cache) failed");
 
-    // Find output file
-    let no_cache_file =
-        find_intunewin_file(output_dir).expect("No .intunewin file found after first build");
+    // NOTE: Final `.intunewin` is encrypted with random keys/IV, so it is intentionally
+    // non-deterministic between runs. For cache integrity we compare the *inner ZIP*.
+    let no_cache_zip = find_zip_file(output_dir).expect("No .zip file found after first build");
 
-    let no_cache_hash = get_file_hash(&no_cache_file);
-    println!("  No-cache hash:  {}", no_cache_hash);
+    let no_cache_hash = get_file_hash(&no_cache_zip);
+    println!("  No-cache inner ZIP hash:  {}", no_cache_hash);
 
-    // Save the file for comparison
-    let no_cache_copy = output_dir.join("no_cache_output.intunewin");
-    fs::copy(&no_cache_file, &no_cache_copy).expect("Failed to copy no-cache output");
+    // Save the no-cache file to a temp location before we delete the directory
+    let temp_dir = PathBuf::from("target/test_cache_temp");
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).expect("Failed to create temp directory");
+    let no_cache_copy = temp_dir.join("no_cache_output.zip");
+    fs::copy(&no_cache_zip, &no_cache_copy).expect("Failed to copy no-cache inner ZIP");
 
-    // Clean output directory
+    // Clean output directory for cache test
     fs::remove_dir_all(output_dir).expect("Failed to remove output directory");
     fs::create_dir_all(output_dir).expect("Failed to create output directory");
 
     // Run 2: With cache (cold cache, first run)
     println!("  Run 2: Building with cache (cold)...");
-    let status = Command::new("./target/release/intunewin-rs")
+    let status = Command::new(intunewin_bin())
         .arg("-c")
         .arg(test_data_path)
         .arg("-s")
@@ -107,17 +117,17 @@ fn test_cache_for_compression(
         .arg("--compression")
         .arg(compression_level.to_string())
         .arg("--cache")
+        .arg("--keep-temp")
         .arg("-q")
         .status()
         .expect("Failed to run intunewin-rs with cache");
 
     assert!(status.success(), "Second build (with cache) failed");
 
-    let cached_file =
-        find_intunewin_file(output_dir).expect("No .intunewin file found after second build");
+    let cached_zip = find_zip_file(output_dir).expect("No .zip file found after second build");
 
-    let cached_hash = get_file_hash(&cached_file);
-    println!("  Cached hash:    {}", cached_hash);
+    let cached_hash = get_file_hash(&cached_zip);
+    println!("  Cached inner ZIP hash:    {}", cached_hash);
 
     // CRITICAL: Verify hashes match
     if no_cache_hash != cached_hash {
@@ -127,7 +137,7 @@ fn test_cache_for_compression(
 
         // Additional debugging: check file sizes
         let no_cache_size = fs::metadata(&no_cache_copy).map(|m| m.len()).unwrap_or(0);
-        let cached_size = fs::metadata(&cached_file).map(|m| m.len()).unwrap_or(0);
+        let cached_size = fs::metadata(&cached_zip).map(|m| m.len()).unwrap_or(0);
 
         println!("\n   Size comparison:");
         println!("     No-cache:   {} bytes", no_cache_size);
@@ -142,9 +152,12 @@ fn test_cache_for_compression(
     }
 
     println!("  ✓ Hashes match - cache integrity verified");
+
+    // Cleanup temp directory
+    let _ = fs::remove_dir_all(&temp_dir);
 }
 
-fn find_intunewin_file(dir: &PathBuf) -> Option<PathBuf> {
+fn find_zip_file(dir: &PathBuf) -> Option<PathBuf> {
     fs::read_dir(dir)
         .ok()?
         .filter_map(|entry| entry.ok())
@@ -152,7 +165,7 @@ fn find_intunewin_file(dir: &PathBuf) -> Option<PathBuf> {
             entry
                 .path()
                 .extension()
-                .map(|ext| ext == "intunewin")
+                .map(|ext| ext == "zip")
                 .unwrap_or(false)
         })
         .map(|entry| entry.path())

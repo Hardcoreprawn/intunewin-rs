@@ -284,8 +284,12 @@ pub fn run(args: &Args) -> Result<()> {
     ));
 
     // Stage 5: Cleanup
-    let _ = fs::remove_file(&zip_path);
-    let _ = fs::remove_file(&encrypted_path);
+    if args.keep_temp {
+        progress.status("Keeping temporary artifacts (--keep-temp)");
+    } else {
+        let _ = fs::remove_file(&zip_path);
+        let _ = fs::remove_file(&encrypted_path);
+    }
 
     progress.status(&stage_msg(5, stages, "Cleanup complete"));
 
