@@ -45,8 +45,8 @@ impl From<CachedCompressedData> for CompressedEntry {
         // Try to unwrap Arc to move Vec without cloning
         // If successful: moves ownership with zero copy
         // If it fails (other references exist): clone the Vec
-        let compressed_data = Arc::try_unwrap(cached.compressed_data)
-            .unwrap_or_else(|arc| (*arc).clone());
+        let compressed_data =
+            Arc::try_unwrap(cached.compressed_data).unwrap_or_else(|arc| (*arc).clone());
         Self {
             relative_path: cached.relative_path,
             compressed_data,

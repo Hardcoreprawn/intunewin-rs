@@ -312,15 +312,27 @@ impl CacheManager {
             return Ok(CacheManifest::new());
         }
 
-        let content =
-            fs::read_to_string(&manifest_path).map_err(|e| IntunewinError::FileReadError {
-                path: manifest_path.clone(),
-                source: e,
-            })?;
+        let content = match fs::read_to_string(&manifest_path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!(
+                    "Warning: Could not read cache manifest: {}. Cache will be cleared.",
+                    e
+                );
+                return Ok(CacheManifest::new());
+            }
+        };
 
-        serde_json::from_str(&content).map_err(|e| {
-            IntunewinError::InvalidInput(format!("Failed to parse cache manifest: {}", e))
-        })
+        match serde_json::from_str(&content) {
+            Ok(manifest) => Ok(manifest),
+            Err(e) => {
+                eprintln!(
+                    "Warning: Cache manifest is corrupted: {}. Cache will be cleared.",
+                    e
+                );
+                Ok(CacheManifest::new())
+            }
+        }
     }
 
     fn save_manifest(&self) -> Result<()> {
@@ -345,6 +357,10 @@ impl CacheManager {
     }
 
     /// Load a specific file's cached data on-demand
+    ///
+    /// If the cache file is corrupted or truncated, logs a warning and returns None
+    /// rather than failing the entire build. This allows graceful degradation where
+    /// corrupted files are recompressed but the build continues.
     fn load_cached_file(
         cache_dir: &Path,
         relative_path: &str,
@@ -363,18 +379,28 @@ impl CacheManager {
         }
 
         // Read the small header to get metadata
-        let mut file = File::open(&file_path).map_err(|e| IntunewinError::FileReadError {
-            path: file_path.clone(),
-            source: e,
-        })?;
+        let mut file = match File::open(&file_path) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!(
+                    "Warning: Could not read cache file '{}': {}. File will be recompressed.",
+                    file_path.display(),
+                    e
+                );
+                return Ok(None);
+            }
+        };
 
         // Read metadata: crc32 (4) + uncompressed_size (4) + compression_method (2)
         let mut header = [0u8; 10];
-        file.read_exact(&mut header)
-            .map_err(|e| IntunewinError::FileReadError {
-                path: file_path.clone(),
-                source: e,
-            })?;
+        if let Err(e) = file.read_exact(&mut header) {
+            eprintln!(
+                "Warning: Cache file '{}' is corrupted (incomplete header): {}. File will be recompressed.",
+                file_path.display(),
+                e
+            );
+            return Ok(None);
+        }
 
         let crc32 = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
         let uncompressed_size = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
@@ -382,11 +408,14 @@ impl CacheManager {
 
         // Read the compressed data
         let mut compressed_data = Vec::new();
-        file.read_to_end(&mut compressed_data)
-            .map_err(|e| IntunewinError::FileReadError {
-                path: file_path,
-                source: e,
-            })?;
+        if let Err(e) = file.read_to_end(&mut compressed_data) {
+            eprintln!(
+                "Warning: Could not read cache file '{}' data: {}. File will be recompressed.",
+                file_path.display(),
+                e
+            );
+            return Ok(None);
+        }
 
         Ok(Some(CachedCompressedData {
             relative_path: relative_path.to_string(),
