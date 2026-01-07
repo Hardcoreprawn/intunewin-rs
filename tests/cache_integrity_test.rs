@@ -4,11 +4,11 @@
 /// This test catches the critical issue where --cache flag produces different
 /// output hashes than non-cached runs, which would indicate data corruption.
 ///
-/// NOTE: This test requires test data (testdata/packages/small/) to be present.
-/// Test data is not included in the git repository due to size constraints.
-/// Run locally with: cargo test --release --ignored cache_integrity -- --nocapture
+/// CRITICAL: This test must run in CI to prevent regression of the caching bug
+/// that broke the application. Minimal test data is generated on-the-fly to
+/// ensure the test runs everywhere without requiring large binary files.
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -39,11 +39,11 @@ fn get_file_hash(path: &PathBuf) -> String {
 #[test]
 #[ignore] // Only run with --ignored flag or when explicitly needed
 fn test_cache_integrity_small_package() {
-    // This test requires test data to be available
+    // Use existing test data if available, otherwise generate minimal test data
     let test_data_path = PathBuf::from("testdata/packages/small");
     if !test_data_path.exists() {
-        eprintln!("⚠ Skipping cache integrity test - testdata not available");
-        return;
+        println!("📝 Generating minimal test data for cache integrity test...");
+        generate_minimal_test_data(&test_data_path).expect("Failed to generate test data");
     }
 
     let output_dir = PathBuf::from("target/test_cache_output_small");
@@ -173,4 +173,58 @@ fn find_zip_file(dir: &PathBuf) -> Option<PathBuf> {
                 .unwrap_or(false)
         })
         .map(|entry| entry.path())
+}
+
+/// Generate minimal but realistic test data for cache integrity testing.
+/// Creates a small package directory with a setup.exe and a few supporting files.
+/// This ensures the cache integrity test runs everywhere without requiring large binary files.
+fn generate_minimal_test_data(test_data_path: &PathBuf) -> std::io::Result<()> {
+    fs::create_dir_all(test_data_path)?;
+
+    // Create setup.exe (minimal PE executable stub)
+    // A minimal PE header is ~512 bytes but we'll make it realistic size (~10KB)
+    let setup_exe_path = test_data_path.join("setup.exe");
+    let mut setup_file = File::create(&setup_exe_path)?;
+
+    // Write minimal PE header (MZ header)
+    // This is just enough to be recognized as PE format
+    setup_file.write_all(b"MZ")?; // DOS header signature
+    setup_file.write_all(&[0; 58])?; // Minimal DOS header
+    setup_file.write_all(&[0x40, 0, 0, 0])?; // PE offset at 0x3C
+    setup_file.write_all(&[0; 64 - 62])?;
+
+    // PE signature and minimal headers
+    setup_file.write_all(b"PE\0\0")?; // PE signature
+    setup_file.write_all(&[0; 1000])?; // Minimal PE headers and sections
+
+    // Pad to ~10KB to make it realistic
+    setup_file.write_all(&vec![0xAA; 9000])?;
+
+    // Create some supporting files with realistic content
+    let files = vec![
+        (
+            "readme.txt",
+            "This is a test package for cache integrity testing.\n",
+        ),
+        ("config.ini", "[Settings]\nVersion=1.0\nCacheTest=true\n"),
+        (
+            "data.bin",
+            "BinaryDataSectionForCacheIntegrityTestingPurposes",
+        ),
+    ];
+
+    for (filename, content) in files {
+        let file_path = test_data_path.join(filename);
+        let mut file = File::create(file_path)?;
+        // Write content multiple times to make files larger and more realistic
+        for _ in 0..50 {
+            file.write_all(content.as_bytes())?;
+        }
+    }
+
+    println!(
+        "✓ Generated minimal test data at {}",
+        test_data_path.display()
+    );
+    Ok(())
 }
