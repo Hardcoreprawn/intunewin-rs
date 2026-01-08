@@ -130,7 +130,7 @@ Compression 6 vs 9 (254 MB package):
   Level 6: 5.51s → 250.41 MB
   Level 9: 5.58s → 249.87 MB (with cache: 1.38s)
   
-Trade-off: 0% slower initially, only 0.54 MB more savings
+Trade-off: ~1% slower initially, only 0.54 MB more savings
   But with cache both are 1.4x speedup anyway ✓ Level 6 preferred
 ```
 
