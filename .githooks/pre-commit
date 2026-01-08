@@ -5,7 +5,7 @@
 set -e
 
 echo "Running cargo fmt..."
-cargo fmt -- --check
+cargo fmt --all -- --check
 if [ $? -ne 0 ]; then
     echo "ERROR: Code is not formatted. Run 'cargo fmt' before committing."
     exit 1
