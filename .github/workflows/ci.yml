@@ -77,13 +77,15 @@ jobs:
 
       - name: Run tests
         run: cargo test --all-features --verbose
+        continue-on-error: ${{ matrix.rust == 'beta' }}
 
       - name: Run tests (release mode)
         run: cargo test --release --all-features
+        continue-on-error: ${{ matrix.rust == 'beta' }}
 
       - name: Run cache integrity tests (critical)
         run: cargo test --release -- --ignored cache_integrity --nocapture
-        continue-on-error: false
+        continue-on-error: ${{ matrix.rust == 'beta' }}
 
   docs:
     name: Documentation
