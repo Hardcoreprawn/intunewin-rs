@@ -399,9 +399,10 @@ pub fn compress_to_inner_zip_cached(
         // Check for None values before flattening to provide specific error messages
         for (idx, entry) in results.iter().enumerate() {
             if entry.is_none() {
-                return Err(IntunewinError::CompressionError(
-                    format!("File at batch index {} was not processed", idx)
-                ));
+                return Err(IntunewinError::CompressionError(format!(
+                    "File at batch index {} was not processed",
+                    idx
+                )));
             }
         }
 
