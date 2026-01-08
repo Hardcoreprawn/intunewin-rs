@@ -67,8 +67,8 @@ fn compress_file(
     let crc32 = crc32fast::hash(&data);
     let uncompressed_size = data.len() as u32;
 
-    // Normalize path separators
-    let relative_path = entry.relative_path.to_string_lossy().replace('\\', "/");
+    // Use the cached normalized path (computed during discovery)
+    let relative_path = entry.normalized_path.clone();
 
     // Update progress
     if let (Some(bytes), Some(bar)) = (progress_bytes, progress_bar) {

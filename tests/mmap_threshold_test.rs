@@ -1,5 +1,5 @@
 //! Test to validate mmap threshold optimization
-//! 
+//!
 //! This test compares performance of file reading with different mmap thresholds
 //! to verify that lowering the threshold from 1MB to 256KB provides measurable improvement
 //! on small-file-heavy packages.
@@ -44,7 +44,7 @@ fn benchmark_file_reads_with_threshold(
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().is_file())
             .collect();
-        
+
         for entry in entries {
             let path = entry.path();
             let metadata = fs::metadata(path).expect("Failed to get metadata");
@@ -68,16 +68,16 @@ fn benchmark_file_reads_with_threshold(
 }
 
 /// Test: Verify that the lower mmap threshold (256KB) is now in effect
-/// 
+///
 /// This test verifies the optimization has been successfully implemented by confirming
 /// that files in the 256KB-1MB range now use memory-mapped I/O (faster performance).
 #[test]
 fn test_mmap_threshold_small_files() {
     println!("\n=== MMAP Threshold Optimization Verification ===\n");
-    
+
     // Create test package: 50 files from 100KB-500KB (heavy on files between 256KB-1MB)
     let test_dir = create_small_file_package(50, 100, 500);
-    
+
     // Calculate total package size
     let total_size: u64 = walkdir::WalkDir::new(&test_dir)
         .into_iter()
@@ -85,7 +85,7 @@ fn test_mmap_threshold_small_files() {
         .filter(|e| e.file_type().is_file())
         .map(|e| e.metadata().map(|m| m.len()).unwrap_or(0))
         .sum();
-    
+
     let total_mb = total_size as f64 / (1024.0 * 1024.0);
     println!("Test Package:");
     println!("  Files: 50");
@@ -95,12 +95,18 @@ fn test_mmap_threshold_small_files() {
     // Benchmark with OLD threshold (1MB) - for comparison
     println!("Baseline: With old 1.0 MB threshold");
     let old_time = benchmark_file_reads_with_threshold(&test_dir, 1.0, 3);
-    println!("  Average time per iteration: {:.2} ms\n", old_time.as_secs_f64() * 1000.0);
+    println!(
+        "  Average time per iteration: {:.2} ms\n",
+        old_time.as_secs_f64() * 1000.0
+    );
 
     // Benchmark with NEW/CURRENT threshold (256KB) - should be same or better
     println!("Current: With optimized 0.256 MB threshold");
     let new_time = benchmark_file_reads_with_threshold(&test_dir, 0.256, 3);
-    println!("  Average time per iteration: {:.2} ms\n", new_time.as_secs_f64() * 1000.0);
+    println!(
+        "  Average time per iteration: {:.2} ms\n",
+        new_time.as_secs_f64() * 1000.0
+    );
 
     // Calculate improvement
     let improvement = if new_time < old_time {
@@ -111,41 +117,52 @@ fn test_mmap_threshold_small_files() {
 
     println!("Result:");
     if improvement > 0.0 {
-        println!("  ✓ OPTIMIZATION VALIDATED: {:.1}% faster with new 256KB threshold", improvement);
+        println!(
+            "  ✓ OPTIMIZATION VALIDATED: {:.1}% faster with new 256KB threshold",
+            improvement
+        );
     } else if improvement > -2.0 {
-        println!("  ✓ OPTIMIZATION SAFE: {:.1}% variance (within acceptable range)", -improvement);
+        println!(
+            "  ✓ OPTIMIZATION SAFE: {:.1}% variance (within acceptable range)",
+            -improvement
+        );
     } else {
         println!("  ✗ OPTIMIZATION REGRESSED: {:.1}% slower", -improvement);
     }
-    println!("  Old (1.0 MB): {:.2} ms vs New (0.256 MB): {:.2} ms\n", 
+    println!(
+        "  Old (1.0 MB): {:.2} ms vs New (0.256 MB): {:.2} ms\n",
         old_time.as_secs_f64() * 1000.0,
-        new_time.as_secs_f64() * 1000.0);
+        new_time.as_secs_f64() * 1000.0
+    );
 
     // Cleanup will happen automatically when test_dir is dropped
     drop(test_dir);
 
     // Assert optimization doesn't cause regression
-    assert!(improvement > -5.0, 
-        "Optimization should not cause significant regression ({}% change)", improvement);
+    assert!(
+        improvement > -5.0,
+        "Optimization should not cause significant regression ({}% change)",
+        improvement
+    );
 }
 
 /// Test: Verify mmap threshold doesn't negatively impact large files
-/// 
+///
 /// Package: 10 files ranging from 10MB to 100MB
 #[test]
 fn test_mmap_threshold_large_files() {
     println!("\n=== MMAP Threshold Large File Test ===\n");
-    
+
     // Create test package: 10 files from 10MB-100MB
     let test_dir = create_small_file_package(10, 10 * 1024, 100 * 1024);
-    
+
     let total_size: u64 = walkdir::WalkDir::new(&test_dir)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
         .map(|e| e.metadata().map(|m| m.len()).unwrap_or(0))
         .sum();
-    
+
     let total_mb = total_size as f64 / (1024.0 * 1024.0);
     println!("Test Package:");
     println!("  Files: 10");
@@ -165,19 +182,26 @@ fn test_mmap_threshold_large_files() {
 
     // For large files, both should use mmap, so times should be similar
     let variance = if current_time > proposed_time {
-        ((current_time.as_secs_f64() - proposed_time.as_secs_f64()) / current_time.as_secs_f64()) * 100.0
+        ((current_time.as_secs_f64() - proposed_time.as_secs_f64()) / current_time.as_secs_f64())
+            * 100.0
     } else {
-        ((proposed_time.as_secs_f64() - current_time.as_secs_f64()) / proposed_time.as_secs_f64()) * 100.0
+        ((proposed_time.as_secs_f64() - current_time.as_secs_f64()) / proposed_time.as_secs_f64())
+            * 100.0
     };
 
     println!("Result:");
     println!("  Variance: {:.1}% (should be minimal)", variance);
-    println!("  Current: {:.2} ms vs Proposed: {:.2} ms\n", 
+    println!(
+        "  Current: {:.2} ms vs Proposed: {:.2} ms\n",
         current_time.as_secs_f64() * 1000.0,
-        proposed_time.as_secs_f64() * 1000.0);
+        proposed_time.as_secs_f64() * 1000.0
+    );
 
     // For large files, both thresholds should use mmap, so variance should be small
     // Allow up to 20% variance due to system noise
-    assert!(variance < 20.0, 
-        "Large file performance should be similar regardless of threshold ({}% variance)", variance);
+    assert!(
+        variance < 20.0,
+        "Large file performance should be similar regardless of threshold ({}% variance)",
+        variance
+    );
 }

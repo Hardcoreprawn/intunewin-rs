@@ -17,6 +17,9 @@ pub struct FileEntry {
     pub size: u64,
     /// Whether this is the setup file
     pub is_setup_file: bool,
+    /// Normalized path (forward slashes, for use in ZIP archives)
+    /// Cached during discovery to avoid repeated normalization during compression
+    pub normalized_path: String,
 }
 
 /// Result of the discovery process.
@@ -123,12 +126,16 @@ pub fn discover(content_folder: &Path, setup_file: &str) -> Result<DiscoveryResu
                     .map(|n| n.to_string_lossy() == setup_file)
                     .unwrap_or(false);
 
+            // Normalize path once during discovery (forward slashes for ZIP archive)
+            let normalized_path = raw.relative_path.to_string_lossy().replace('\\', "/");
+
             Ok((
                 FileEntry {
                     relative_path: raw.relative_path.clone(),
                     absolute_path: raw.absolute_path.clone(),
                     size,
                     is_setup_file,
+                    normalized_path,
                 },
                 is_setup_file,
             ))
