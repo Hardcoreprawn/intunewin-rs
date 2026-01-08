@@ -13,7 +13,7 @@
 //! ```
 
 use std::fs::File;
-use std::io::{BufReader, Read, Write};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
 use zip::write::SimpleFileOptions;
@@ -68,7 +68,9 @@ pub fn create_intunewin(
         source: e,
     })?;
 
-    let mut zip = ZipWriter::new(file);
+    // Wrap in BufWriter for efficient syscall batching (64KB default buffer)
+    let buffered_file = BufWriter::with_capacity(64 * 1024, file);
+    let mut zip = ZipWriter::new(buffered_file);
 
     // Add Detection.xml - stored uncompressed as per Microsoft format
     // Path: IntuneWinPackage/Metadata/Detection.xml
