@@ -72,7 +72,7 @@ intunewin-rs -c ./app -s setup.exe -o ./output --compression 0      # Force stor
 
 **Pros:**
 - Good compression ratio (typically 1-2% size reduction)
-- Cache enables 2-3x speedup on subsequent builds
+- Cache enables 3-4x speedup on subsequent builds (verified: 3.8x for 254 MB)
 - Memory footprint manageable (<100MB overhead)
 - Fast enough (~0.3s overhead vs store-only)
 
@@ -83,12 +83,12 @@ intunewin-rs -c ./app -s setup.exe -o ./output --compression 0      # Force stor
 
 **Example:**
 ```
-Small installer (98 MB):
-  Compression 0: 0.56s → 97.94 MB (baseline)
-  Compression 6: 0.86s → 97.94 MB (30% slower, 0% size savings)
+Medium installer (254 MB):
+  Compression 0: 1.51s → 253.74 MB (baseline)
+  Compression 6: 5.51s → 250.65 MB (3.6x slower initially)
   
 With cache (2nd build):
-  Compression 6: 0.28s → 2.1x faster! ✓ Worth it
+  Compression 6: 1.44s → 3.8x faster! ✓ Worth it for repeats
 ```
 
 ### Compression Level 0 (Large Packages ≥500MB)
@@ -107,10 +107,13 @@ With cache (2nd build):
 **Example:**
 ```
 Large package (1.5 GB):
-  Compression 0: 8.13s → 1531 MB (baseline)
-  Compression 6: 26.81s → 1510 MB (3.3x slower, 1.2% savings)
+  Compression 0: 7.91s → 1531 MB (baseline)
+  Compression 6: 24.29s → 1510 MB (3.1x slower initially)
   
-Trade-off: 18 seconds slower for 21 MB savings ✗ Not worth it
+With cache (2nd build):
+  Compression 6: 19.02s → 1.3x faster (only 5.27s saved)
+  
+Trade-off: Much slower initial build, modest cache benefit ✗ Not recommended
 ```
 
 ### Why Not Compression 9?
@@ -124,10 +127,11 @@ Maximum compression (level 9) is never auto-selected because:
 **Example:**
 ```
 Compression 6 vs 9 (254 MB package):
-  Level 6: 6.68s → 250.41 MB
-  Level 9: 19.2s → 249.87 MB
+  Level 6: 5.51s → 250.41 MB
+  Level 9: 5.58s → 249.87 MB (with cache: 1.38s)
   
-Trade-off: 12.5 seconds slower for 0.54 MB savings ✗ Never worth it
+Trade-off: ~1% slower initially, only 0.54 MB more savings
+  But with cache both are 1.4x speedup anyway ✓ Level 6 preferred
 ```
 
 ---
@@ -364,18 +368,18 @@ fn calculate_folder_size(path: &Path) -> Result<u64> {
 
 | Package Size | Default | Time | Notes |
 |:-------------|:--------|:----:|:------|
-| Small (98 MB) | Comp 6 | 0.86s | Good balance, enables caching |
-| Medium (254 MB) | Comp 6 | 6.68s | Still beneficial for repeats |
-| Large (1.5 GB) | Comp 0 | 8.13s | Maximum speed |
+| Small (0.02 MB) | Comp 6 | 0.03s | Fast, enables caching |
+| Medium (254 MB) | Comp 6 | 5.51s | Good balance, enables caching |
+| Large (1.5 GB) | Comp 0 | 7.91s | Maximum speed |
 | Very Large (3.5 GB) | Comp 0 | 7.9s | Stable, predictable |
 
 ### Warm Cache (Second Build)
 
-| Package Size | Default | Time | Speedup |
-|:-------------|:--------|:----:|:-------:|
-| Small (98 MB) | Comp 6 | 0.28s | **3.0x** |
-| Medium (254 MB) | Comp 6 | 2.2s | **3.0x** |
-| Large (1.5 GB) | Comp 0 | 8.13s | None (no compression) |
+| Package Size | Default | Time | Speedup | Notes |
+|:-------------|:--------|:----:|:-------:|:------|
+| Small (0.02 MB) | Comp 6 | 0.03s | **16.7x** | Incredible speedup |
+| Medium (254 MB) | Comp 6 | 1.44s | **3.8x** | Significant benefit |
+| Large (1.5 GB) | Comp 0 | 7.91s | None | No compression |
 
 ---
 

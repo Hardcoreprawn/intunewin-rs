@@ -61,6 +61,13 @@ pub struct Args {
     /// Show cache statistics
     #[arg(long = "cache-stats", default_value_t = false)]
     pub cache_stats: bool,
+
+    /// Keep intermediate artifacts (inner .zip and encrypted .tmp) in the output folder.
+    ///
+    /// Useful for debugging and for cache-integrity verification, since final `.intunewin`
+    /// output is intentionally non-deterministic due to random encryption keys/IV.
+    #[arg(long = "keep-temp", default_value_t = false)]
+    pub keep_temp: bool,
 }
 
 impl Args {

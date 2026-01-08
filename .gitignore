@@ -2,7 +2,7 @@
 testdata/packages/
 testdata/output/
 testdata/benchmarks/*.etl
-testdata/benchmarks/*.etl.xml
+test_small/
 
 # Build artifacts
 target/

@@ -149,14 +149,6 @@ impl StreamingZipWriter {
         })
     }
 
-    /// Write a batch of compressed entries to the ZIP
-    fn write_batch(&mut self, entries: Vec<CompressedEntry>) -> Result<()> {
-        for entry in entries {
-            self.write_entry(entry)?;
-        }
-        Ok(())
-    }
-
     /// Write a single compressed entry
     fn write_entry(&mut self, entry: CompressedEntry) -> Result<()> {
         let offset = self
@@ -343,57 +335,51 @@ pub fn compress_to_inner_zip_cached(
     let batches = partition_into_batches(&discovery.files, BATCH_SIZE_BYTES);
 
     for batch in batches {
-        // Separate files into cached and uncached, collecting cached data in one pass
-        let (cached_entries, uncached_files): (Vec<_>, Vec<_>) = if let Some(ref c) = cache {
-            let mut cached_data = Vec::new();
-            let mut uncached = Vec::new();
+        // Process files in order: collect uncached indices while storing cached results
+        let mut results: Vec<Option<CompressedEntry>> = (0..batch.len()).map(|_| None).collect();
+        let mut uncached_with_indices: Vec<(usize, &FileEntry)> = Vec::new();
 
-            for f in batch {
-                match c.check(f) {
+        // First pass: check cache for each file in order
+        for (idx, file) in batch.iter().enumerate() {
+            if let Some(ref c) = cache {
+                match c.check(file) {
                     CacheResult::Hit(data) => {
-                        cached_data.push(data);
+                        cache_hits += 1;
+                        bytes_saved += data.uncompressed_size as u64;
+
+                        // Update progress
+                        if let Some(bar) = progress_bar {
+                            progress_bytes
+                                .fetch_add(data.uncompressed_size as u64, Ordering::Relaxed);
+                            bar.set_position(progress_bytes.load(Ordering::Relaxed));
+                        }
+
+                        results[idx] = Some(data.into());
                     }
                     CacheResult::Miss => {
-                        uncached.push(f);
+                        uncached_with_indices.push((idx, file));
                     }
                 }
+            } else {
+                uncached_with_indices.push((idx, file));
             }
-
-            (cached_data, uncached)
-        } else {
-            (Vec::new(), batch.clone())
-        };
-
-        // Process cached files (no double lookup)
-        for cached_data in cached_entries {
-            cache_hits += 1;
-            bytes_saved += cached_data.uncompressed_size as u64;
-
-            // Update progress
-            if let Some(bar) = progress_bar {
-                progress_bytes.fetch_add(cached_data.uncompressed_size as u64, Ordering::Relaxed);
-                bar.set_position(progress_bytes.load(Ordering::Relaxed));
-            }
-
-            // Write cached data to ZIP
-            zip_writer.write_entry(cached_data.into())?;
         }
 
-        // PHASE 1: Parallel compression of uncached files
-        if !uncached_files.is_empty() {
-            cache_misses += uncached_files.len();
+        // Second pass: compress all uncached files in parallel
+        if !uncached_with_indices.is_empty() {
+            cache_misses += uncached_with_indices.len();
 
             let pb = progress_bar;
             let bytes_ref = &progress_bytes;
 
-            let entries: Vec<CompressedEntry> = uncached_files
+            let compressed: Vec<CompressedEntry> = uncached_with_indices
                 .par_iter()
-                .map(|f| compress_file(f, compression_level, use_mmap, Some(bytes_ref), pb))
+                .map(|(_, f)| compress_file(f, compression_level, use_mmap, Some(bytes_ref), pb))
                 .collect::<Result<Vec<_>>>()?;
 
-            // Store in cache if enabled
+            // Record in cache and store at original positions
             if let Some(c) = cache.as_mut() {
-                for (entry, file) in entries.iter().zip(uncached_files.iter()) {
+                for (entry, (_, file)) in compressed.iter().zip(uncached_with_indices.iter()) {
                     c.record(
                         file,
                         entry.compressed_data.clone(),
@@ -404,8 +390,36 @@ pub fn compress_to_inner_zip_cached(
                 }
             }
 
-            // PHASE 2: Write batch to ZIP (releases memory for next batch)
-            zip_writer.write_batch(entries)?;
+            // Store compressed entries at their original positions
+            for (entry, (idx, _)) in compressed.into_iter().zip(uncached_with_indices.iter()) {
+                results[*idx] = Some(entry);
+            }
+        }
+
+        // Check for None values before flattening to provide specific error messages
+        for (idx, entry) in results.iter().enumerate() {
+            if entry.is_none() {
+                return Err(IntunewinError::CompressionError(format!(
+                    "File at batch index {} was not processed",
+                    idx
+                )));
+            }
+        }
+
+        // Write all entries in ORIGINAL BATCH ORDER
+        let mut entry_count = 0;
+        for entry in results.into_iter().flatten() {
+            entry_count += 1;
+            zip_writer.write_entry(entry)?;
+        }
+
+        // Verify all files were written
+        if entry_count != batch.len() {
+            return Err(IntunewinError::CompressionError(format!(
+                "File count mismatch: wrote {} entries but batch has {}",
+                entry_count,
+                batch.len()
+            )));
         }
     }
 
