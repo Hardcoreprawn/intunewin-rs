@@ -85,8 +85,8 @@ Write-Host "Baseline (compression 0): $($results[0].Time_Sec)s, $($results[0].Ou
 
 for ($i = 1; $i -lt $results.Count; $i++) {
     $r = $results[$i]
-    $slowdownFromFastest = [math]::Round($results[0].Time_Sec / $r.Time_Sec, 2)
-    Write-Host "Compression $($r.Compression): $($r.Time_Sec)s ($slowdownFromFastest x baseline), $($r.Output_MB)MB ($($r.Size_Reduction_Pct)% smaller), $($r.Throughput_MBps)MB/s" -ForegroundColor White
+    $slowdownVsBaseline = [math]::Round($r.Time_Sec / $results[0].Time_Sec, 2)
+    Write-Host "Compression $($r.Compression): $($r.Time_Sec)s ($slowdownVsBaseline x baseline time), $($r.Output_MB)MB ($($r.Size_Reduction_Pct)% smaller), $($r.Throughput_MBps)MB/s" -ForegroundColor White
 }
 
 Write-Host ""
