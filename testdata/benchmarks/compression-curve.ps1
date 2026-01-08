@@ -59,16 +59,17 @@ foreach ($compression in $compressionLevels) {
     $outMB = if ($output) { [math]::Round($output.Length / 1MB, 2) } else { 0 }
     
     $throughput = if ($sec -gt 0) { [math]::Round($sizeMB / $sec, 1) } else { 0 }
-    $sizeReduction = if ($compression -eq 0) { 0 } else { [math]::Round((1 - ($outMB / $sizeMB)) * 100, 1) }
+    # Note: This measures overall .intunewin package size change vs. raw input size, not pure compression savings.
+    $packageSizeChangePct = if ($compression -eq 0) { 0 } else { [math]::Round((1 - ($outMB / $sizeMB)) * 100, 1) }
     
-    Write-Host " $sec sec, $outMB MB output, $throughput MB/s, $sizeReduction% reduction" -ForegroundColor Yellow
+    Write-Host " $sec sec, $outMB MB output, $throughput MB/s, $packageSizeChangePct% package size change" -ForegroundColor Yellow
     
     $results += [PSCustomObject]@{
         Compression = $compression
         Time_Sec = $sec
         Output_MB = $outMB
         Throughput_MBps = $throughput
-        Size_Reduction_Pct = $sizeReduction
+        Package_Size_Change_Pct = $packageSizeChangePct
     }
 }
 
