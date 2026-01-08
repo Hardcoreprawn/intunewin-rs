@@ -42,9 +42,12 @@
 | **Large** | 1.5 GB | 6 | 24.29s | 19.02s | **1.3x** | 5.27s |
 | **Large** | 1.5 GB | 9 | 23.31s | 19.17s | **1.2x** | 4.14s |
 
-**Key Insight:** Caching provides meaningful 1.2-4x speedups for repeated builds when using compression (levels 6-9). Store-only mode (compression 0) is fastest for initial builds of large packages.
+**Key Insight:** For large packages, **store-only mode (compression 0) is the recommended default for maximum initial speed**. The large-package results shown for compression 6 and 9 illustrate an alternative, size-optimized profile: when you choose higher compression to shrink upload size, enabling caching still provides meaningful 1.2–4x speedups on repeated builds.
 
-> **Philosophy:** Most installers (.exe, .msi) are already compressed. We prioritize speed and stability, especially for large packages. Use `--compression 0` (store-only) for maximum initial speed. Enable `--cache` with `--compression 6-9` for 2-4x faster repeated builds.
+> **Philosophy:** Most installers (.exe, .msi) are already compressed. We prioritize speed and stability, especially for large packages.
+> 
+> - **Speed-optimized (default for ≥ ~500 MB):** Use `--compression 0` (store-only) for maximum and predictable initial build speed.
+> - **Size-optimized (optional):** If you explicitly want smaller `.intunewin` files and can trade build time for size, use `--compression 6-9` together with `--cache` for 2–4x faster repeated builds compared to uncached compressed runs.
 
 ## 📦 Installation
 
