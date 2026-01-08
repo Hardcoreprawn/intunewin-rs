@@ -396,6 +396,15 @@ pub fn compress_to_inner_zip_cached(
             }
         }
 
+        // Check for None values before flattening to provide specific error messages
+        for (idx, entry) in results.iter().enumerate() {
+            if entry.is_none() {
+                return Err(IntunewinError::CompressionError(
+                    format!("File at batch index {} was not processed", idx)
+                ));
+            }
+        }
+
         // Write all entries in ORIGINAL BATCH ORDER
         let mut entry_count = 0;
         for entry in results.into_iter().flatten() {
