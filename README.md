@@ -154,7 +154,7 @@ Most installers (.exe, .msi, .cab) are already compressed. DEFLATE adds only 1-2
 
 | Package | Size | Compression 0 | Compression 6 | Cache Enabled | Size Reduction | Repeat Speedup |
 |:--------|:----:|:-------------:|:-------------:|:-------------:|:--------------:|:---------------:|
-| Small | 0.02 MB | 0.5s | 0.03s | ✅ | 0% | **16.7x** |
+| Small | 0.02 MB | 0.5s | 0.03s | ❌ | 0% | N/A |
 | Medium | 254 MB | 1.51s | 5.51s | ✅ | 1.3% | **3.8x** |
 | Large | 1.5 GB | 7.91s | 24.29s | ✅ | 1.2% | **1.3x** |
 
