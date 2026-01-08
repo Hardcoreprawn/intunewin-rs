@@ -109,8 +109,8 @@ fn test_cache_for_compression(
     fs::remove_dir_all(output_dir).expect("Failed to remove output directory");
     fs::create_dir_all(output_dir).expect("Failed to create output directory");
 
-    // Run 2: With cache (cold cache, first run)
-    println!("  Run 2: Building with cache (cold)...");
+    // Run 2: With cache (cold cache, first run - populates cache)
+    println!("  Run 2: Building with cache (cold - populates cache)...");
     let status = Command::new(intunewin_bin())
         .arg("-c")
         .arg(test_data_path)
@@ -126,36 +126,90 @@ fn test_cache_for_compression(
         .status()
         .expect("Failed to run intunewin-rs with cache");
 
-    assert!(status.success(), "Second build (with cache) failed");
+    assert!(status.success(), "Second build (cold cache) failed");
 
-    let cached_zip = find_zip_file(output_dir).expect("No .zip file found after second build");
+    let cold_cache_zip = find_zip_file(output_dir).expect("No .zip file found after second build");
 
-    let cached_hash = get_file_hash(&cached_zip);
-    println!("  Cached inner ZIP hash:    {}", cached_hash);
+    let cold_cache_hash = get_file_hash(&cold_cache_zip);
+    println!("  Cold cache inner ZIP hash: {}", cold_cache_hash);
 
-    // CRITICAL: Verify hashes match
-    if no_cache_hash != cached_hash {
-        println!("\n❌ CACHE INTEGRITY FAILURE!");
-        println!("   No-cache:  {}", no_cache_hash);
-        println!("   With cache: {}", cached_hash);
+    // CRITICAL: Verify cold cache matches no-cache
+    if no_cache_hash != cold_cache_hash {
+        println!("\n❌ CACHE INTEGRITY FAILURE (cold cache)!");
+        println!("   No-cache:    {}", no_cache_hash);
+        println!("   Cold cache:  {}", cold_cache_hash);
 
         // Additional debugging: check file sizes
         let no_cache_size = fs::metadata(&no_cache_copy).map(|m| m.len()).unwrap_or(0);
-        let cached_size = fs::metadata(&cached_zip).map(|m| m.len()).unwrap_or(0);
+        let cold_cache_size = fs::metadata(&cold_cache_zip).map(|m| m.len()).unwrap_or(0);
 
         println!("\n   Size comparison:");
-        println!("     No-cache:   {} bytes", no_cache_size);
-        println!("     With cache: {} bytes", cached_size);
+        println!("     No-cache:    {} bytes", no_cache_size);
+        println!("     Cold cache:  {} bytes", cold_cache_size);
 
         panic!(
-            "Cache integrity test failed for compression level {}: \
+            "Cache integrity test failed for compression level {} (cold cache): \
              cached output differs from non-cached output. \
              This indicates a critical data consistency issue.",
             compression_level
         );
     }
 
-    println!("  ✓ Hashes match - cache integrity verified");
+    println!("  ✓ Cold cache matches no-cache");
+
+    // Clean output directory for warm cache test
+    fs::remove_dir_all(output_dir).expect("Failed to remove output directory");
+    fs::create_dir_all(output_dir).expect("Failed to create output directory");
+
+    // Run 3: With cache (warm cache - uses already populated cache)
+    println!("  Run 3: Building with cache (warm - uses cache)...");
+    let status = Command::new(intunewin_bin())
+        .arg("-c")
+        .arg(test_data_path)
+        .arg("-s")
+        .arg("setup.exe")
+        .arg("-o")
+        .arg(output_dir)
+        .arg("--compression")
+        .arg(compression_level.to_string())
+        .arg("--cache")
+        .arg("--keep-temp")
+        .arg("-q")
+        .status()
+        .expect("Failed to run intunewin-rs with warm cache");
+
+    assert!(status.success(), "Third build (warm cache) failed");
+
+    let warm_cache_zip = find_zip_file(output_dir).expect("No .zip file found after third build");
+
+    let warm_cache_hash = get_file_hash(&warm_cache_zip);
+    println!("  Warm cache inner ZIP hash: {}", warm_cache_hash);
+
+    // CRITICAL: Verify warm cache matches no-cache and cold cache
+    if no_cache_hash != warm_cache_hash {
+        println!("\n❌ CACHE INTEGRITY FAILURE (warm cache)!");
+        println!("   No-cache:    {}", no_cache_hash);
+        println!("   Cold cache:  {}", cold_cache_hash);
+        println!("   Warm cache:  {}", warm_cache_hash);
+
+        // Additional debugging: check file sizes
+        let no_cache_size = fs::metadata(&no_cache_copy).map(|m| m.len()).unwrap_or(0);
+        let warm_cache_size = fs::metadata(&warm_cache_zip).map(|m| m.len()).unwrap_or(0);
+
+        println!("\n   Size comparison:");
+        println!("     No-cache:    {} bytes", no_cache_size);
+        println!("     Warm cache:  {} bytes", warm_cache_size);
+
+        panic!(
+            "Cache integrity test failed for compression level {} (warm cache): \
+             cached output differs from non-cached output. \
+             This indicates a critical data consistency issue in cache lookup path.",
+            compression_level
+        );
+    }
+
+    println!("  ✓ Warm cache matches no-cache and cold cache");
+    println!("  ✓ Cache integrity verified for all runs");
 
     // Cleanup temp directory
     let _ = fs::remove_dir_all(&temp_dir);
