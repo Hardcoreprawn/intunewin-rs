@@ -12,10 +12,15 @@ use memmap2::Mmap;
 
 use crate::error::{IntunewinError, Result};
 
-/// Threshold for using memory-mapped I/O (256 KB)
-/// Lowered from 1MB to 256KB to improve performance on packages with many small files.
-/// Modern SSDs benefit from mmap at 256KB+, providing ~16% speedup on small-file-heavy packages.
+/// Threshold for using memory-mapped I/O
+/// Platform-specific:
+/// - Windows: 256 KB (lower threshold benefits from different I/O patterns)
+/// - Linux/macOS: 1 MB (mmap overhead not worth it below 1MB on Unix)
+#[cfg(target_os = "windows")]
 const MMAP_THRESHOLD: u64 = 256 * 1024;
+
+#[cfg(not(target_os = "windows"))]
+const MMAP_THRESHOLD: u64 = 1024 * 1024;
 
 /// Reads a file using the most efficient method based on size and configuration.
 ///
