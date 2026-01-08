@@ -194,7 +194,7 @@ impl CacheManager {
     pub fn record(
         &mut self,
         entry: &FileEntry,
-        compressed_data: Vec<u8>,
+        compressed_data: Arc<Vec<u8>>,
         crc32: u32,
         uncompressed_size: u32,
         compression_method: u16,
@@ -267,7 +267,7 @@ impl CacheManager {
             key.clone(),
             CachedCompressedData {
                 relative_path: key,
-                compressed_data: Arc::new(compressed_data),
+                compressed_data,
                 crc32,
                 uncompressed_size,
                 compression_method,
@@ -315,8 +315,8 @@ impl CacheManager {
     }
 
     /// Returns cache statistics.
-    pub fn stats(&self) -> CacheStats {
-        self.manifest.stats.clone()
+    pub fn stats(&self) -> &CacheStats {
+        &self.manifest.stats
     }
 
     /// Updates cache statistics after a build.

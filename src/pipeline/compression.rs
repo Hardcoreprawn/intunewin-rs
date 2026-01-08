@@ -33,7 +33,7 @@ const BATCH_SIZE_BYTES: u64 = 500 * 1024 * 1024;
 /// Pre-compressed file ready for ZIP assembly
 struct CompressedEntry {
     relative_path: String,
-    compressed_data: Vec<u8>,
+    compressed_data: Arc<Vec<u8>>,
     uncompressed_size: u32,
     crc32: u32,
     /// Compression method: 8 = DEFLATE, 0 = STORED (no compression)
@@ -42,14 +42,10 @@ struct CompressedEntry {
 
 impl From<CachedCompressedData> for CompressedEntry {
     fn from(cached: CachedCompressedData) -> Self {
-        // Try to unwrap Arc to move Vec without cloning
-        // If successful: moves ownership with zero copy
-        // If it fails (other references exist): clone the Vec
-        let compressed_data =
-            Arc::try_unwrap(cached.compressed_data).unwrap_or_else(|arc| (*arc).clone());
+        // Arc is shared - no clone needed
         Self {
             relative_path: cached.relative_path,
-            compressed_data,
+            compressed_data: cached.compressed_data,
             uncompressed_size: cached.uncompressed_size,
             crc32: cached.crc32,
             compression_method: cached.compression_method,
@@ -85,7 +81,7 @@ fn compress_file(
     if level == 0 {
         return Ok(CompressedEntry {
             relative_path,
-            compressed_data: data,
+            compressed_data: Arc::new(data),
             uncompressed_size,
             crc32,
             compression_method: 0, // STORED
@@ -105,7 +101,7 @@ fn compress_file(
     if compressed_data.len() >= data.len() {
         Ok(CompressedEntry {
             relative_path,
-            compressed_data: data,
+            compressed_data: Arc::new(data),
             uncompressed_size,
             crc32,
             compression_method: 0, // STORED
@@ -113,7 +109,7 @@ fn compress_file(
     } else {
         Ok(CompressedEntry {
             relative_path,
-            compressed_data,
+            compressed_data: Arc::new(compressed_data),
             uncompressed_size,
             crc32,
             compression_method: 8, // DEFLATE
@@ -377,21 +373,18 @@ pub fn compress_to_inner_zip_cached(
                 .map(|(_, f)| compress_file(f, compression_level, use_mmap, Some(bytes_ref), pb))
                 .collect::<Result<Vec<_>>>()?;
 
-            // Record in cache and store at original positions
-            if let Some(c) = cache.as_mut() {
-                for (entry, (_, file)) in compressed.iter().zip(uncached_with_indices.iter()) {
+            // Store compressed entries at their original positions and record in cache
+            for (entry, (idx, file)) in compressed.into_iter().zip(uncached_with_indices.iter()) {
+                // Record in cache if enabled (shares Arc, no expensive Vec clone)
+                if let Some(c) = cache.as_mut() {
                     c.record(
                         file,
-                        entry.compressed_data.clone(),
+                        Arc::clone(&entry.compressed_data),
                         entry.crc32,
                         entry.uncompressed_size,
                         entry.compression_method,
                     );
                 }
-            }
-
-            // Store compressed entries at their original positions
-            for (entry, (idx, _)) in compressed.into_iter().zip(uncached_with_indices.iter()) {
                 results[*idx] = Some(entry);
             }
         }
