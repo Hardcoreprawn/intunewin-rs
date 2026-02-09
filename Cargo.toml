@@ -27,11 +27,11 @@ aes = "0.8"
 cbc = "0.1"
 hmac = "0.12"
 sha2 = "0.10"
-rand = "0.9"
+rand = "0.10"
 rayon = "1.8"
 memmap2 = "0.9"
 walkdir = "2"
-quick-xml = { version = "0.38", features = ["serialize"] }
+quick-xml = { version = "0.39", features = ["serialize"] }
 indicatif = "0.18"
 thiserror = "2"
 anyhow = "1"
