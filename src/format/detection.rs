@@ -15,7 +15,7 @@ const TOOL_VERSION: &str = "1.8.7.0";
 /// Metadata required to generate Detection.xml.
 #[derive(Debug, Clone)]
 pub struct DetectionInfo {
-    /// Name of the application (typically the setup file name without extension)
+    /// Name of the application (including file extension, e.g., "setup.exe")
     pub name: String,
     /// Original unencrypted content size in bytes
     pub unencrypted_content_size: u64,
@@ -28,7 +28,7 @@ pub struct DetectionInfo {
 /// Metadata for streaming encryption (keys passed directly, no encrypted_data)
 #[derive(Debug, Clone)]
 pub struct StreamingDetectionInfo {
-    /// Name of the application (typically the setup file name without extension)
+    /// Name of the application (including file extension, e.g., "setup.exe")
     pub name: String,
     /// Original unencrypted content size in bytes
     pub unencrypted_content_size: u64,
@@ -61,14 +61,14 @@ pub struct StreamingDetectionInfo {
 ///
 /// let encryption = encrypt_with_keygen(b"test data").unwrap();
 /// let info = DetectionInfo {
-///     name: "setup".to_string(),
+///     name: "setup.exe".to_string(),
 ///     unencrypted_content_size: 1024,
 ///     setup_file: "setup.exe".to_string(),
 ///     encryption,
 /// };
 ///
 /// let xml = generate_detection_xml(&info).unwrap();
-/// assert!(xml.contains("<Name>setup</Name>"));
+/// assert!(xml.contains("<Name>setup.exe</Name>"));
 /// ```
 pub fn generate_detection_xml(info: &DetectionInfo) -> Result<String> {
     // Encode binary values as base64

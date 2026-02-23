@@ -211,10 +211,7 @@ pub fn run(args: &Args) -> Result<()> {
             .unwrap_or_else(|| "setup".to_string());
 
         let detection_info = StreamingDetectionInfo {
-            name: setup_name
-                .rsplit_once('.')
-                .map(|(name, _)| name.to_string())
-                .unwrap_or_else(|| setup_name.clone()),
+            name: setup_name.clone(),
             unencrypted_content_size: zip_size,
             setup_file: setup_name.clone(),
             key: streaming_result.key,
@@ -246,10 +243,7 @@ pub fn run(args: &Args) -> Result<()> {
             .unwrap_or_else(|| "setup".to_string());
 
         let detection_info = DetectionInfo {
-            name: setup_name
-                .rsplit_once('.')
-                .map(|(name, _)| name.to_string())
-                .unwrap_or_else(|| setup_name.clone()),
+            name: setup_name.clone(),
             unencrypted_content_size: zip_size,
             setup_file: setup_name.clone(),
             encryption: encryption_result,
