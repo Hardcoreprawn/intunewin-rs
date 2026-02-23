@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+<!-- markdownlint-configure-file {"MD024": {"siblings_only": true}} -->
+
 ## [Unreleased]
 
 ### Added
@@ -15,23 +17,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ZIP64 streaming fallback for very large package inputs to keep memory bounded and support >4 GiB / >65k-entry scenarios
-- Explicit catalog-flag behavior test coverage (`--catalog` now documented and validated as reserved/unsupported)
-- Compatibility contract documentation (`docs/COMPATIBILITY.md`) for supported and unsupported behavior
+- ZIP64 streaming fallback for very large package inputs to keep memory bounded
+  and support >4 GiB / >65k-entry scenarios
+- Explicit catalog-flag behavior test coverage (`--catalog` now documented
+  and validated as reserved/unsupported)
+- Compatibility contract documentation (`docs/COMPATIBILITY.md`) for supported
+  and unsupported behavior
 
 ### Changed
 
-- Centralized preflight and smart-default resolution in pipeline orchestration
-- README and build/test docs aligned with current behavior and compatibility contract
+- Centralized preflight and smart-default resolution in pipeline
+  orchestration
+- README and build/test docs aligned with current behavior and
+  compatibility contract
 - Setup-file discovery now deterministic with explicit ambiguity errors
 
 ### Fixed
 
-- ZIP32 boundary guardrails for offsets, sizes, entry counts, and name-length safety
-- Setup-path sanitization to reject unsafe inputs (absolute paths and parent traversal)
-- Output path safety checks to prevent writing package output within content roots
-- Checked memory allocation conversions in mmap path (`u64` to `usize`) for safer large-file handling
-- CI confidence improved by making cache-integrity tests first-class and stabilizing mmap threshold variance expectations
+- ZIP32 boundary guardrails for offsets, sizes, entry counts, and
+  name-length safety
+- Setup-path sanitization to reject unsafe inputs (absolute paths and
+  parent traversal)
+- Output path safety checks to prevent writing package output within
+  content roots
+- Checked memory allocation conversions in mmap path (`u64` to `usize`)
+  for safer large-file handling
+- CI confidence improved by making cache-integrity tests first-class and
+  stabilizing mmap threshold variance expectations
 
 ## [0.2.0] - 2026-02-23
 

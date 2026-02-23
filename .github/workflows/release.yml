@@ -250,6 +250,53 @@ jobs:
           sha256sum intunewin-rs-*.* > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
+      - name: Validate checksum manifest
+        run: |
+          set -euo pipefail
+
+          mapfile -t archives < <(ls -1 intunewin-rs-*.*)
+          if [ ${#archives[@]} -eq 0 ]; then
+            echo "No release archives found for checksum validation"
+            exit 1
+          fi
+
+          if [ ! -f SHA256SUMS.txt ]; then
+            echo "SHA256SUMS.txt was not generated"
+            exit 1
+          fi
+
+          if [ "$(wc -l < SHA256SUMS.txt)" -ne "${#archives[@]}" ]; then
+            echo "Checksum entry count does not match archive count"
+            echo "archives=${#archives[@]}, checksum_lines=$(wc -l < SHA256SUMS.txt)"
+            exit 1
+          fi
+
+          manifest_files=$(awk '{f=$2; sub(/^\*/, "", f); print f}' SHA256SUMS.txt | sort)
+          archive_files=$(printf "%s\n" "${archives[@]}" | sort)
+
+          if [ "$manifest_files" != "$archive_files" ]; then
+            echo "Checksum manifest files do not match release archives"
+            diff <(printf "%s\n" "$archive_files") <(printf "%s\n" "$manifest_files") || true
+            exit 1
+          fi
+
+          sample="${archives[0]}"
+          expected_hash=$(awk -v f="$sample" '$2==f || $2=="*"f {print $1}' SHA256SUMS.txt)
+          if [ -z "$expected_hash" ]; then
+            echo "No checksum entry found for sample file: $sample"
+            exit 1
+          fi
+
+          actual_hash=$(sha256sum "$sample" | awk '{print $1}')
+          if [ "$expected_hash" != "$actual_hash" ]; then
+            echo "Checksum mismatch for $sample"
+            echo "expected=$expected_hash"
+            echo "actual=$actual_hash"
+            exit 1
+          fi
+
+          echo "Checksum manifest validation passed"
+
       - name: Upload checksums
         uses: actions/upload-release-asset@v1
         env:

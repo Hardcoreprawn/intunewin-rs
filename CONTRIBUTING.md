@@ -12,11 +12,11 @@ Thank you for your interest in contributing to intunewin-rs! This document provi
 - [Submitting Changes](#-submitting-changes)
 - [Release Process](#-release-process)
 
-## 📜 Code of Conduct {#-code-of-conduct}
+## 📜 Code of Conduct
 
 This project follows the [Rust Code of Conduct](https://www.rust-lang.org/policies/code-of-conduct). Please be respectful and constructive in all interactions.
 
-## 🚀 Getting Started {#getting-started}
+## 🚀 Getting Started
 
 ### Prerequisites
 
