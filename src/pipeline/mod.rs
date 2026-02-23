@@ -44,7 +44,15 @@ pub fn run(args: &Args) -> Result<()> {
     let start_time = Instant::now();
     let progress = ProgressTracker::new(args.is_quiet());
 
-    let use_cache = args.use_cache();
+    // Preflight validation and defaults (shared by CLI and library callers)
+    if args.catalog.is_some() {
+        return Err(anyhow::anyhow!(
+            "--catalog is not implemented yet in intunewin-rs. Remove -a/--catalog and retry."
+        ));
+    }
+
+    let compression = resolve_compression_level(args)?;
+    let use_cache = args.use_cache_with_compression(compression);
     let stages = if use_cache {
         TOTAL_STAGES_CACHED
     } else {
@@ -56,8 +64,15 @@ pub fn run(args: &Args) -> Result<()> {
         println!("  Source: {}", args.content.display());
         println!("  Setup: {}", args.setup);
         println!("  Output: {}", args.output.display());
+        if args.compression.is_none() {
+            let mode = if compression == 0 {
+                "store-only (fastest for large packages)"
+            } else {
+                "compression 6 (good balance)"
+            };
+            println!("  Auto-selected compression: {}", mode);
+        }
         if use_cache {
-            let compression = args.compression.unwrap_or(0);
             if compression > 0 && !args.cache {
                 println!("  Caching: auto-enabled (compression > 0)");
             } else {
@@ -69,9 +84,6 @@ pub fn run(args: &Args) -> Result<()> {
 
     // Initialize cache if enabled
     let mut cache = if use_cache {
-        let compression = args
-            .compression
-            .expect("Compression should be set by main.rs auto-detection");
         let mut cache_mgr = CacheManager::with_compression_level(&args.output, compression)
             .map_err(|e| anyhow::anyhow!("Cache error: {}", e))?;
 
@@ -144,9 +156,6 @@ pub fn run(args: &Args) -> Result<()> {
         progress.create_byte_bar(discovery.total_size, &stage_msg(2, stages, "Compressing"));
 
     let use_mmap = !args.no_mmap;
-    let compression = args
-        .compression
-        .expect("Compression should be set by main.rs auto-detection");
 
     let compression_result = compress_to_inner_zip_cached(
         &discovery,
@@ -318,4 +327,135 @@ pub fn run(args: &Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Resolve the effective compression level for this run.
+///
+/// If user explicitly sets `--compression`, that value is used.
+/// Otherwise, smart defaults are applied based on content folder size:
+/// - < 500MB => 6
+/// - >= 500MB => 0
+fn resolve_compression_level(args: &Args) -> Result<u32> {
+    if let Some(level) = args.compression {
+        return Ok(level);
+    }
+
+    let total_size = calculate_folder_size(&args.content)?;
+    let selected = if total_size < 500 * 1024 * 1024 { 6 } else { 0 };
+    Ok(selected)
+}
+
+/// Calculate total size of all files in a directory (recursively).
+///
+/// Behavior:
+/// - Symlinks are NOT followed (skipped without error)
+/// - Permission errors on individual entries are logged but don't stop the scan
+/// - Uses stack-safe iterative approach to handle large directory trees
+fn calculate_folder_size(path: &std::path::Path) -> Result<u64> {
+    let mut total_size = 0u64;
+    let mut queue = vec![path.to_path_buf()];
+
+    while let Some(current_dir) = queue.pop() {
+        match fs::read_dir(&current_dir) {
+            Ok(entries) => {
+                for entry_result in entries {
+                    match entry_result {
+                        Ok(entry) => match entry.metadata() {
+                            Ok(metadata) => {
+                                if metadata.is_dir() && !metadata.is_symlink() {
+                                    queue.push(entry.path());
+                                } else if metadata.is_file() {
+                                    total_size += metadata.len();
+                                }
+                            }
+                            Err(_) => {
+                                if let Ok(file_name) = entry.file_name().into_string() {
+                                    eprintln!(
+                                            "Warning: Could not read metadata for '{}' in '{}', skipping",
+                                            file_name,
+                                            current_dir.display()
+                                        );
+                                }
+                            }
+                        },
+                        Err(_) => continue,
+                    }
+                }
+            }
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    eprintln!(
+                        "Warning: Permission denied reading directory '{}', skipping",
+                        current_dir.display()
+                    );
+                } else {
+                    return Err(e.into());
+                }
+            }
+        }
+    }
+
+    Ok(total_size)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn resolve_compression_uses_explicit_value() {
+        let args = Args {
+            content: std::path::PathBuf::from("."),
+            setup: "setup.exe".to_string(),
+            output: std::path::PathBuf::from("."),
+            catalog: None,
+            quiet: true,
+            silent: true,
+            threads: None,
+            compression: Some(9),
+            no_mmap: false,
+            cache: false,
+            no_cache: false,
+            clear_cache: false,
+            cache_stats: false,
+            keep_temp: false,
+        };
+
+        assert_eq!(resolve_compression_level(&args).unwrap(), 9);
+    }
+
+    #[test]
+    fn resolve_compression_auto_selects_small_package_level() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("intunewin_pipeline_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let file_path = temp_dir.join("small.bin");
+        let mut file = std::fs::File::create(&file_path).unwrap();
+        file.write_all(&[1u8; 1024]).unwrap();
+
+        let args = Args {
+            content: temp_dir.clone(),
+            setup: "setup.exe".to_string(),
+            output: temp_dir.clone(),
+            catalog: None,
+            quiet: true,
+            silent: true,
+            threads: None,
+            compression: None,
+            no_mmap: false,
+            cache: false,
+            no_cache: false,
+            clear_cache: false,
+            cache_stats: false,
+            keep_temp: false,
+        };
+
+        assert_eq!(resolve_compression_level(&args).unwrap(), 6);
+
+        let _ = std::fs::remove_file(file_path);
+        let _ = std::fs::remove_dir(temp_dir);
+    }
 }
