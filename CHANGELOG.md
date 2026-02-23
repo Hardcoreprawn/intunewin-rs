@@ -11,6 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Future features and improvements will be listed here
 
+## [0.2.0] - 2026-02-23
+
+### Added
+
+- Performance optimizations: platform-specific mmap thresholds (#53)
+- Buffered ZIP writes for improved I/O efficiency (#58)
+- Cached normalized paths during file discovery (#57)
+
+### Fixed
+
+- Detection.xml `Name` field now includes file extension for full parity with IntuneWinAppUtil (#65)
+- Platform-aware mmap threshold validation: 256KB (Windows) vs 1MB (Linux/macOS)
+- Test reliability on different platforms
+
+### Changed
+
+- Updated dependencies:
+  - `zip`: 7.0 → 8.0.0 (Rust 2024 migration)
+  - `rand`: 0.9 → 0.10.0 (API improvements)
+  - `quick-xml`: 0.38 → 0.39.1 (namespace scope fixes)
+
 ## [0.1.0] - 2026-01-06
 
 ### Added
@@ -56,5 +77,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Code coverage reporting
 - Security vulnerability scanning
 
-[Unreleased]: https://github.com/hardcoreprawn/intunewin-rs/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/hardcoreprawn/intunewin-rs/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/hardcoreprawn/intunewin-rs/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/hardcoreprawn/intunewin-rs/releases/tag/v0.1.0
