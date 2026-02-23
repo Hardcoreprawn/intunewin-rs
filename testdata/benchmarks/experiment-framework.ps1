@@ -6,7 +6,15 @@ param(
     [string]$ControlCommandTemplate = '.\target\release\intunewin-rs.exe -c "{CONTENT}" -s "{SETUP}" -o "{OUTPUT}" -q',
     [string]$CandidateCommandTemplate = '.\target\release\intunewin-rs.exe -c "{CONTENT}" -s "{SETUP}" -o "{OUTPUT}" -q',
     [int]$WarmupRuns = 1,
-    [int]$Iterations = 5,
+    [int]$Iterations = 7,
+    [ValidateSet('standard', 'extended')]
+    [string]$DatasetProfile = 'extended',
+    [ValidateSet('interleaved', 'sequential')]
+    [string]$RunOrder = 'interleaved',
+    [ValidateSet('preserve', 'clear-each-iteration')]
+    [string]$CacheControl = 'preserve',
+    [int]$CooldownMs = 150,
+    [switch]$ShuffleDatasets,
     [switch]$IncludeLarge,
     [switch]$Strict
 )
@@ -38,6 +46,23 @@ function Get-Percentile {
 
     $weight = $rank - $low
     return [double]($sorted[$low] + (($sorted[$high] - $sorted[$low]) * $weight))
+}
+
+function Get-EnvironmentSnapshot {
+    $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+    $os = Get-CimInstance Win32_OperatingSystem
+    $totalRamGiB = [math]::Round(([double]$os.TotalVisibleMemorySize * 1KB) / 1GB, 2)
+
+    return [PSCustomObject]@{
+        host_name = $env:COMPUTERNAME
+        os = $os.Caption
+        os_version = $os.Version
+        cpu_model = $cpu.Name
+        logical_cores = [int]$cpu.NumberOfLogicalProcessors
+        physical_cores = [int]$cpu.NumberOfCores
+        total_ram_gib = $totalRamGiB
+        powershell = $PSVersionTable.PSVersion.ToString()
+    }
 }
 
 function Test-DetectionXmlReadable {
@@ -107,77 +132,80 @@ function Invoke-BenchmarkCommand {
     }
 }
 
-function Invoke-VariantOnDataset {
+function Invoke-VariantSample {
     param(
         [string]$Variant,
         [string]$CommandTemplate,
         [hashtable]$Dataset,
         [string]$RunRoot,
-        [int]$Warmups,
-        [int]$Runs,
+        [string]$Phase,
+        [int]$Iteration,
+        [ValidateSet('preserve', 'clear-each-iteration')]
+        [string]$CachePolicy,
         [switch]$StrictMode
     )
 
     $variantRoot = Join-Path $RunRoot "$($Dataset.Name)_$Variant"
-    if (Test-Path $variantRoot) {
-        Remove-Item $variantRoot -Recurse -Force
+    if (-not (Test-Path $variantRoot)) {
+        New-Item -ItemType Directory -Path $variantRoot -Force | Out-Null
     }
-    New-Item -ItemType Directory -Path $variantRoot -Force | Out-Null
+
+    if ($CachePolicy -eq 'clear-each-iteration') {
+        $cacheDir = Join-Path $variantRoot '.intunewin-cache'
+        if (Test-Path $cacheDir) {
+            Remove-Item $cacheDir -Recurse -Force
+        }
+    }
 
     $setupStem = [System.IO.Path]::GetFileNameWithoutExtension($Dataset.Setup)
     $packagePath = Join-Path $variantRoot ("$setupStem.intunewin")
-
     $cmd = $CommandTemplate.Replace('{CONTENT}', $Dataset.Path).Replace('{SETUP}', $Dataset.Setup).Replace('{OUTPUT}', $variantRoot)
 
-    for ($i = 1; $i -le $Warmups; $i++) {
-        Write-Host "  [$Variant/$($Dataset.Name)] Warmup $i/$Warmups" -ForegroundColor DarkGray
-        $warm = Invoke-BenchmarkCommand -Command $cmd -WorkingDirectory (Get-Location)
-        if ($warm.ExitCode -ne 0) {
-            throw "Warmup failed for $Variant/$($Dataset.Name) with exit code $($warm.ExitCode)"
-        }
+    $result = Invoke-BenchmarkCommand -Command $cmd -WorkingDirectory (Get-Location)
+    $packageExists = Test-Path $packagePath
+    $packageSizeMB = if ($packageExists) { [math]::Round((Get-Item $packagePath).Length / 1MB, 3) } else { $null }
+    $dotnetReadable = if ($packageExists) { Test-DetectionXmlReadable -PackagePath $packagePath } else { $false }
+
+    if ($StrictMode -and ($result.ExitCode -ne 0 -or -not $dotnetReadable)) {
+        throw "Strict mode failure for $Variant/$($Dataset.Name): exit=$($result.ExitCode), dotnetReadable=$dotnetReadable"
     }
 
-    $samples = @()
-    for ($i = 1; $i -le $Runs; $i++) {
-        Write-Host "  [$Variant/$($Dataset.Name)] Iteration $i/$Runs" -ForegroundColor Gray
-        $result = Invoke-BenchmarkCommand -Command $cmd -WorkingDirectory (Get-Location)
-
-        $packageExists = Test-Path $packagePath
-        $packageSizeMB = if ($packageExists) { [math]::Round((Get-Item $packagePath).Length / 1MB, 3) } else { $null }
-        $dotnetReadable = if ($packageExists) { Test-DetectionXmlReadable -PackagePath $packagePath } else { $false }
-
-        if ($StrictMode -and ($result.ExitCode -ne 0 -or -not $dotnetReadable)) {
-            throw "Strict mode failure for $Variant/$($Dataset.Name): exit=$($result.ExitCode), dotnetReadable=$dotnetReadable"
-        }
-
-        $samples += [PSCustomObject]@{
-            iteration = $i
-            exit_code = $result.ExitCode
-            duration_ms = $result.DurationMs
-            peak_working_set_mb = $result.PeakWorkingSetMB
-            cpu_time_ms = $result.CpuTimeMs
-            package_exists = $packageExists
-            package_size_mb = $packageSizeMB
-            dotnet_detection_xml_readable = $dotnetReadable
-        }
+    return [PSCustomObject]@{
+        phase = $Phase
+        iteration = $Iteration
+        exit_code = $result.ExitCode
+        duration_ms = $result.DurationMs
+        peak_working_set_mb = $result.PeakWorkingSetMB
+        cpu_time_ms = $result.CpuTimeMs
+        package_exists = $packageExists
+        package_size_mb = $packageSizeMB
+        dotnet_detection_xml_readable = $dotnetReadable
     }
+}
 
-    $durations = @($samples | ForEach-Object { [double]$_.duration_ms })
-    $rss = @($samples | ForEach-Object { [double]$_.peak_working_set_mb })
+function New-VariantResult {
+    param(
+        [string]$Variant,
+        [hashtable]$Dataset,
+        [object[]]$Samples
+    )
+
+    $durations = @($Samples | ForEach-Object { [double]$_.duration_ms })
+    $rss = @($Samples | ForEach-Object { [double]$_.peak_working_set_mb })
 
     return [PSCustomObject]@{
         variant = $Variant
         dataset = $Dataset.Name
         setup = $Dataset.Setup
         content_path = $Dataset.Path
-        samples = $samples
+        samples = $Samples
         summary = [PSCustomObject]@{
             p50_duration_ms = [math]::Round((Get-Percentile -Values $durations -Percentile 50), 2)
             p95_duration_ms = [math]::Round((Get-Percentile -Values $durations -Percentile 95), 2)
             avg_duration_ms = [math]::Round((($durations | Measure-Object -Average).Average), 2)
             peak_rss_mb = [math]::Round((($rss | Measure-Object -Maximum).Maximum), 2)
-            any_failure = ($samples | Where-Object { $_.exit_code -ne 0 }).Count -gt 0
-            all_dotnet_readable = ($samples | Where-Object { -not $_.dotnet_detection_xml_readable }).Count -eq 0
+            any_failure = ($Samples | Where-Object { $_.exit_code -ne 0 }).Count -gt 0
+            all_dotnet_readable = ($Samples | Where-Object { -not $_.dotnet_detection_xml_readable }).Count -eq 0
         }
     }
 }
@@ -192,6 +220,14 @@ $datasets = @(
     @{ Name = 'small'; Path = "$TestDataPath\packages\small"; Setup = 'setup.exe' },
     @{ Name = 'medium'; Path = "$TestDataPath\packages\medium"; Setup = 'Samsung_Magician_installer_Official_9.0.0.910.exe' }
 )
+
+if ($DatasetProfile -eq 'extended') {
+    $datasets = @(
+        @{ Name = 'empty'; Path = "$TestDataPath\packages\empty"; Setup = 'setup.exe' },
+        @{ Name = 'small'; Path = "$TestDataPath\packages\small"; Setup = 'setup.exe' },
+        @{ Name = 'medium'; Path = "$TestDataPath\packages\medium"; Setup = 'Samsung_Magician_installer_Official_9.0.0.910.exe' }
+    )
+}
 
 if ($IncludeLarge) {
     $datasets += @{ Name = 'large'; Path = "$TestDataPath\packages\large\Windows Kits\10\ADK"; Setup = 'adksetup.exe' }
@@ -211,18 +247,67 @@ if ($available.Count -eq 0) {
     throw 'No datasets available to run benchmark framework'
 }
 
+if ($ShuffleDatasets) {
+    $available = @($available | Sort-Object { Get-Random })
+}
+
 $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
 $runRoot = Join-Path $ResultsRoot $timestamp
 New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
 
 Write-Host "Results root: $runRoot" -ForegroundColor Cyan
 
+$environment = Get-EnvironmentSnapshot
+Write-Host "Host: $($environment.host_name), CPU: $($environment.cpu_model), Cores: $($environment.physical_cores)c/$($environment.logical_cores)t, RAM: $($environment.total_ram_gib) GiB" -ForegroundColor Cyan
+Write-Host "Dataset profile: $DatasetProfile | Run order: $RunOrder | Cache control: $CacheControl" -ForegroundColor Cyan
+
 $allResults = @()
 foreach ($dataset in $available) {
     Write-Host "Running dataset: $($dataset.Name)" -ForegroundColor White
 
-    $allResults += Invoke-VariantOnDataset -Variant $ControlLabel -CommandTemplate $ControlCommandTemplate -Dataset $dataset -RunRoot $runRoot -Warmups $WarmupRuns -Runs $Iterations -StrictMode:$Strict
-    $allResults += Invoke-VariantOnDataset -Variant $CandidateLabel -CommandTemplate $CandidateCommandTemplate -Dataset $dataset -RunRoot $runRoot -Warmups $WarmupRuns -Runs $Iterations -StrictMode:$Strict
+    $controlSamples = @()
+    $candidateSamples = @()
+
+    for ($w = 1; $w -le $WarmupRuns; $w++) {
+        Write-Host "  [$ControlLabel/$($dataset.Name)] Warmup $w/$WarmupRuns" -ForegroundColor DarkGray
+        $controlWarm = Invoke-VariantSample -Variant $ControlLabel -CommandTemplate $ControlCommandTemplate -Dataset $dataset -RunRoot $runRoot -Phase 'warmup' -Iteration $w -CachePolicy $CacheControl -StrictMode:$Strict
+        if ($controlWarm.exit_code -ne 0) {
+            throw "Warmup failed for $ControlLabel/$($dataset.Name) with exit code $($controlWarm.exit_code)"
+        }
+
+        Write-Host "  [$CandidateLabel/$($dataset.Name)] Warmup $w/$WarmupRuns" -ForegroundColor DarkGray
+        $candidateWarm = Invoke-VariantSample -Variant $CandidateLabel -CommandTemplate $CandidateCommandTemplate -Dataset $dataset -RunRoot $runRoot -Phase 'warmup' -Iteration $w -CachePolicy $CacheControl -StrictMode:$Strict
+        if ($candidateWarm.exit_code -ne 0) {
+            throw "Warmup failed for $CandidateLabel/$($dataset.Name) with exit code $($candidateWarm.exit_code)"
+        }
+    }
+
+    for ($i = 1; $i -le $Iterations; $i++) {
+        $order = @($ControlLabel, $CandidateLabel)
+        if ($RunOrder -eq 'interleaved' -and ($i % 2 -eq 0)) {
+            $order = @($CandidateLabel, $ControlLabel)
+        }
+
+        foreach ($variant in $order) {
+            if ($variant -eq $ControlLabel) {
+                Write-Host "  [$ControlLabel/$($dataset.Name)] Iteration $i/$Iterations" -ForegroundColor Gray
+                $sample = Invoke-VariantSample -Variant $ControlLabel -CommandTemplate $ControlCommandTemplate -Dataset $dataset -RunRoot $runRoot -Phase 'sample' -Iteration $i -CachePolicy $CacheControl -StrictMode:$Strict
+                $controlSamples += $sample
+            }
+            else {
+                Write-Host "  [$CandidateLabel/$($dataset.Name)] Iteration $i/$Iterations" -ForegroundColor Gray
+                $sample = Invoke-VariantSample -Variant $CandidateLabel -CommandTemplate $CandidateCommandTemplate -Dataset $dataset -RunRoot $runRoot -Phase 'sample' -Iteration $i -CachePolicy $CacheControl -StrictMode:$Strict
+                $candidateSamples += $sample
+            }
+
+            if ($CooldownMs -gt 0) {
+                Start-Sleep -Milliseconds $CooldownMs
+            }
+        }
+    }
+
+    $allResults += New-VariantResult -Variant $ControlLabel -Dataset $dataset -Samples $controlSamples
+    $allResults += New-VariantResult -Variant $CandidateLabel -Dataset $dataset -Samples $candidateSamples
 }
 
 $comparisons = @()
@@ -271,10 +356,15 @@ else {
 
 $report = [PSCustomObject]@{
     generated_at_utc = (Get-Date).ToUniversalTime().ToString('o')
+    environment = $environment
     control_label = $ControlLabel
     candidate_label = $CandidateLabel
     iterations = $Iterations
     warmups = $WarmupRuns
+    dataset_profile = $DatasetProfile
+    run_order = $RunOrder
+    cache_control = $CacheControl
+    cooldown_ms = $CooldownMs
     strict_mode = [bool]$Strict
     datasets = $available
     results = $allResults
