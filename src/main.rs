@@ -26,6 +26,14 @@ fn main() -> Result<()> {
 
 /// Apply smart defaults to parsed arguments
 fn apply_smart_defaults(mut args: Args) -> Result<Args> {
+    // Compatibility contract: --catalog is accepted for CLI parity with the Microsoft tool,
+    // but is not implemented yet. Fail fast so behavior is explicit and never silently ignored.
+    if args.catalog.is_some() {
+        anyhow::bail!(
+            "--catalog is not implemented yet in intunewin-rs. Remove -a/--catalog and retry."
+        );
+    }
+
     // Smart default: Auto-select compression level based on package size
     // This provides sensible defaults without requiring user to think about compression
     if args.compression.is_none() {

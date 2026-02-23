@@ -18,7 +18,7 @@ pub struct Args {
     #[arg(short = 'o', long = "output", required = true)]
     pub output: PathBuf,
 
-    /// Catalog folder (optional)
+    /// Catalog folder (reserved for Microsoft CLI compatibility; currently unsupported)
     #[arg(short = 'a', long = "catalog")]
     pub catalog: Option<PathBuf>,
 
