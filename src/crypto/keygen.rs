@@ -3,7 +3,7 @@
 //! Provides functions for generating AES keys, initialization vectors,
 //! and HMAC keys with cryptographically secure random data.
 
-use rand::RngCore;
+use rand::Rng;
 
 /// Generates a cryptographically secure 256-bit AES key.
 ///
