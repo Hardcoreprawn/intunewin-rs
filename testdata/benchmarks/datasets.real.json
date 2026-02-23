@@ -1,0 +1,49 @@
+{
+  "datasets": [
+    {
+      "name": "medium_samsung_exe",
+      "path": ".\\testdata\\packages\\medium",
+      "setup": "Samsung_Magician_installer_Official_9.0.0.910.exe",
+      "source": "real",
+      "size_profile": "medium",
+      "profiles": ["real", "real_plus_variety"],
+      "notes": "Real vendor EXE installer"
+    },
+    {
+      "name": "medium_nessus_msi",
+      "path": ".\\testdata\\packages\\medium",
+      "setup": "NessusAgent-11.0.2-x64.msi",
+      "source": "real",
+      "size_profile": "medium",
+      "profiles": ["real", "real_plus_variety"],
+      "notes": "Real vendor MSI installer"
+    },
+    {
+      "name": "large_adk_exe",
+      "path": ".\\testdata\\packages\\large\\Windows Kits\\10\\ADK",
+      "setup": "adksetup.exe",
+      "source": "real",
+      "size_profile": "large",
+      "profiles": ["real", "real_plus_variety"],
+      "notes": "Real large installer tree"
+    },
+    {
+      "name": "synthetic_small",
+      "path": ".\\testdata\\packages\\small",
+      "setup": "setup.exe",
+      "source": "synthetic",
+      "size_profile": "small",
+      "profiles": ["synthetic"],
+      "notes": "Synthetic data for quick smoke tests only"
+    },
+    {
+      "name": "synthetic_empty",
+      "path": ".\\testdata\\packages\\empty",
+      "setup": "setup.exe",
+      "source": "synthetic",
+      "size_profile": "small",
+      "profiles": ["synthetic"],
+      "notes": "Edge-case synthetic dataset"
+    }
+  ]
+}

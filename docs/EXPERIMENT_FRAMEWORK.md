@@ -5,6 +5,7 @@ This document defines the baseline framework used to evaluate high-complexity pe
 ## Script
 
 - Harness: `testdata/benchmarks/experiment-framework.ps1`
+- Dataset manifest: `testdata/benchmarks/datasets.real.json`
 - Output: timestamped folder under `testdata/benchmarks/results/`
   - `summary.json` (machine-readable)
   - `summary.md` (human summary)
@@ -25,7 +26,8 @@ Per dataset and variant (control/candidate):
 
 To reduce misleading results on high-end local machines:
 
-- Use `-DatasetProfile extended` for variety (`empty`, `small`, `medium`), and include `-IncludeLarge` when available.
+- Use `-DatasetProfile real` (default) so runs use real installers from the manifest.
+- Add `-IncludeLarge` for large real installer coverage.
 - Use at least `-Iterations 7` and `-WarmupRuns 1`.
 - Use `-RunOrder interleaved` to alternate control/candidate ordering and reduce thermal/time drift bias.
 - Keep `.NET` readability checks enabled to prevent speed wins that break compatibility.
@@ -49,8 +51,8 @@ Default recommendation logic (from issue `#75`):
 # Build release binary first
 cargo build --release
 
-# Compare baseline vs baseline (sanity run)
-.\testdata\benchmarks\experiment-framework.ps1 -DatasetProfile extended -Iterations 7 -WarmupRuns 1 -RunOrder interleaved
+# Compare baseline vs baseline (sanity run, real installers)
+.\testdata\benchmarks\experiment-framework.ps1 -DatasetProfile real -Iterations 7 -WarmupRuns 1 -RunOrder interleaved -IncludeLarge
 ```
 
 ## Compare Candidate Variant
@@ -69,7 +71,7 @@ Use command templates with placeholders:
   -CandidateCommandTemplate '.\target\release\intunewin-rs.exe -c "{CONTENT}" -s "{SETUP}" -o "{OUTPUT}" -q --compression 6 --cache' `
   -Iterations 7 `
   -WarmupRuns 1 `
-  -DatasetProfile extended `
+  -DatasetProfile real `
   -RunOrder interleaved `
   -CacheControl preserve
 ```
@@ -89,6 +91,7 @@ Use command templates with placeholders:
 
 ## Notes
 
-- Datasets default to `extended` profile (`empty`, `small`, `medium`); use `-IncludeLarge` for additional scale.
+- Datasets default to `real` profile from the manifest (`datasets.real.json`).
+- Synthetic datasets are opt-in only: use `-DatasetProfile synthetic -AllowSynthetic`.
 - Use `-Strict` to fail immediately on command failures or unreadable output.
 - Intune tenant upload validation is intentionally out-of-scope for this local framework and should be tracked separately when tenant access is available.

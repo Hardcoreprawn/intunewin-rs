@@ -1,14 +1,14 @@
 param(
     [string]$TestDataPath = '.\testdata',
     [string]$ResultsRoot = '.\testdata\benchmarks\results',
+    [string]$DatasetManifestPath = '.\testdata\benchmarks\datasets.real.json',
     [string]$ControlLabel = 'control',
     [string]$CandidateLabel = 'candidate',
     [string]$ControlCommandTemplate = '.\target\release\intunewin-rs.exe -c "{CONTENT}" -s "{SETUP}" -o "{OUTPUT}" -q',
     [string]$CandidateCommandTemplate = '.\target\release\intunewin-rs.exe -c "{CONTENT}" -s "{SETUP}" -o "{OUTPUT}" -q',
     [int]$WarmupRuns = 1,
     [int]$Iterations = 7,
-    [ValidateSet('standard', 'extended')]
-    [string]$DatasetProfile = 'extended',
+    [string]$DatasetProfile = 'real',
     [ValidateSet('interleaved', 'sequential')]
     [string]$RunOrder = 'interleaved',
     [ValidateSet('preserve', 'clear-each-iteration')]
@@ -16,6 +16,7 @@ param(
     [int]$CooldownMs = 150,
     [switch]$ShuffleDatasets,
     [switch]$IncludeLarge,
+    [switch]$AllowSynthetic,
     [switch]$Strict
 )
 
@@ -63,6 +64,51 @@ function Get-EnvironmentSnapshot {
         total_ram_gib = $totalRamGiB
         powershell = $PSVersionTable.PSVersion.ToString()
     }
+}
+
+function Get-DatasetsFromManifest {
+    param(
+        [string]$ManifestPath,
+        [string]$Profile,
+        [switch]$IncludeLargeDatasets,
+        [switch]$SyntheticAllowed
+    )
+
+    if (-not (Test-Path $ManifestPath)) {
+        throw "Dataset manifest not found: $ManifestPath"
+    }
+
+    $manifest = Get-Content $ManifestPath -Raw | ConvertFrom-Json
+    if ($null -eq $manifest.datasets) {
+        throw "Invalid dataset manifest: missing datasets array"
+    }
+
+    $selected = @()
+    foreach ($entry in $manifest.datasets) {
+        $profiles = @($entry.profiles)
+        if ($profiles -notcontains $Profile) {
+            continue
+        }
+
+        if (-not $IncludeLargeDatasets -and [string]$entry.size_profile -eq 'large') {
+            continue
+        }
+
+        if (-not $SyntheticAllowed -and [string]$entry.source -ne 'real') {
+            continue
+        }
+
+        $selected += @{
+            Name = [string]$entry.name
+            Path = [string]$entry.path
+            Setup = [string]$entry.setup
+            Source = [string]$entry.source
+            SizeProfile = [string]$entry.size_profile
+            Notes = [string]$entry.notes
+        }
+    }
+
+    return $selected
 }
 
 function Test-DetectionXmlReadable {
@@ -216,22 +262,7 @@ Write-Host 'IntuneWin Experiment Framework (Issue #75 baseline)' -ForegroundColo
 Write-Host '==============================================================' -ForegroundColor Cyan
 Write-Host ''
 
-$datasets = @(
-    @{ Name = 'small'; Path = "$TestDataPath\packages\small"; Setup = 'setup.exe' },
-    @{ Name = 'medium'; Path = "$TestDataPath\packages\medium"; Setup = 'Samsung_Magician_installer_Official_9.0.0.910.exe' }
-)
-
-if ($DatasetProfile -eq 'extended') {
-    $datasets = @(
-        @{ Name = 'empty'; Path = "$TestDataPath\packages\empty"; Setup = 'setup.exe' },
-        @{ Name = 'small'; Path = "$TestDataPath\packages\small"; Setup = 'setup.exe' },
-        @{ Name = 'medium'; Path = "$TestDataPath\packages\medium"; Setup = 'Samsung_Magician_installer_Official_9.0.0.910.exe' }
-    )
-}
-
-if ($IncludeLarge) {
-    $datasets += @{ Name = 'large'; Path = "$TestDataPath\packages\large\Windows Kits\10\ADK"; Setup = 'adksetup.exe' }
-}
+$datasets = Get-DatasetsFromManifest -ManifestPath $DatasetManifestPath -Profile $DatasetProfile -IncludeLargeDatasets:$IncludeLarge -SyntheticAllowed:$AllowSynthetic
 
 $available = @()
 foreach ($d in $datasets) {
@@ -259,7 +290,7 @@ Write-Host "Results root: $runRoot" -ForegroundColor Cyan
 
 $environment = Get-EnvironmentSnapshot
 Write-Host "Host: $($environment.host_name), CPU: $($environment.cpu_model), Cores: $($environment.physical_cores)c/$($environment.logical_cores)t, RAM: $($environment.total_ram_gib) GiB" -ForegroundColor Cyan
-Write-Host "Dataset profile: $DatasetProfile | Run order: $RunOrder | Cache control: $CacheControl" -ForegroundColor Cyan
+Write-Host "Dataset profile: $DatasetProfile | Run order: $RunOrder | Cache control: $CacheControl | Synthetic allowed: $($AllowSynthetic.IsPresent)" -ForegroundColor Cyan
 
 $allResults = @()
 foreach ($dataset in $available) {
@@ -357,6 +388,7 @@ else {
 $report = [PSCustomObject]@{
     generated_at_utc = (Get-Date).ToUniversalTime().ToString('o')
     environment = $environment
+    dataset_manifest_path = $DatasetManifestPath
     control_label = $ControlLabel
     candidate_label = $CandidateLabel
     iterations = $Iterations
