@@ -221,14 +221,14 @@ Releases are automated via GitHub Actions. To create a release:
 3. Commit the changes:
 
    ```bash
-   git commit -am "chore: prepare release v0.2.0"
+   git commit -am "chore: prepare release vX.Y.Z"
    ```
 
 4. Create and push a tag:
 
    ```bash
-   git tag v0.2.0
-   git push origin v0.2.0
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
    ```
 
 The CI/CD pipeline will automatically:

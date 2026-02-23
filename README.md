@@ -200,7 +200,7 @@ intunewin-rs -c ./app -s setup.exe -o ./output --compression 6 --clear-cache
 ### Full Command Reference
 
 ```text
-intunewin-rs 0.2.0
+intunewin-rs 0.3.0
 High-performance IntuneWin packager for Intune app deployment
 
 USAGE:
