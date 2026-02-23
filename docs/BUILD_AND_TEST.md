@@ -21,11 +21,11 @@ cd d:\projects\rIntuneWinApp
 .\tests\setup-test-environment.ps1 -SkipIntuneWinDownload
 ```
 
-### 2. Initialize Rust Project
+### 2. Build the Existing Project
 
 ```powershell
-# From rIntuneWinApp directory
-cargo init --name intunewin-rs
+# Project is already initialized; just build it
+cargo build
 ```
 
 ### 3. Build
@@ -74,7 +74,7 @@ cargo bench
 xperf -on Base+DiskIO+FileIO+Memory+ProcessCounter -BufferSize 1024 -MaxBuffers 256
 
 # Run your encoder
-.\target\release\intunewin-rs -i .\testdata\packages\small -o test.intunewin
+.\target\release\intunewin-rs -c .\testdata\packages\small -s setup.exe -o .\testdata\output -q
 
 # Stop tracing and generate ETL
 xperf -d .\testdata\benchmarks\profiling_result.etl
@@ -90,15 +90,19 @@ xperfview .\testdata\benchmarks\profiling_result.etl
 cargo install flamegraph
 
 # Run with sampling
-cargo flamegraph --release -- -i .\testdata\packages\small -o test.intunewin
+cargo flamegraph --release -- -c .\testdata\packages\small -s setup.exe -o .\testdata\output -q
 
 # View result
 .\flamegraph.svg  # Opens in browser
 ```
 
+## Legacy Design Notes (Historical)
+
+The following structure and `Cargo.toml` template are from earlier planning phases and are retained for historical context. For current repository structure, refer to `README.md` and the actual workspace tree.
+
 ## Project Structure During Development
 
-```
+```text
 rIntuneWinApp/
 ├── src/
 │   ├── main.rs              # Entry point
@@ -177,6 +181,7 @@ inherits = "release"
 ## Benchmarking Strategy
 
 ### Phase 1: Baseline
+
 ```powershell
 # Profile MSFT tool on small/medium/large packages
 .\testdata\benchmarks\benchmark.ps1 -PackageSize small
@@ -185,17 +190,19 @@ inherits = "release"
 ```
 
 ### Phase 2: Early Development
+
 ```powershell
 # Build simple single-threaded encoder
 cargo build --release
 
 # Compare against MSFT (expect 0.5-1.5x)
 Measure-Command { 
-    .\target\release\intunewin-rs -i .\testdata\packages\small -o out.intunewin 
+    .\target\release\intunewin-rs -c .\testdata\packages\small -s setup.exe -o .\testdata\output -q
 }
 ```
 
 ### Phase 3: Optimization
+
 ```powershell
 # After adding parallelism, SIMD, memory mapping
 # Target: 2-3x improvement vs MSFT
@@ -208,6 +215,7 @@ xperfview .\testdata\benchmarks\profiling_result.etl
 ```
 
 ### Phase 4: Validation
+
 ```powershell
 # Verify output matches MSFT tool
 .\testdata\benchmarks\validate-output.ps1 `
@@ -218,7 +226,7 @@ xperfview .\testdata\benchmarks\profiling_result.etl
 ## Performance Targets
 
 | Milestone | Small (100MB) | Medium (2.5GB) | Large (20GB) |
-|-----------|---------------|----------------|--------------|
+| --------- | ------------- | -------------- | ------------ |
 | Phase 1 (MVP) | 1x MSFT | 0.8x MSFT | N/A |
 | Phase 2 (Parallel) | 1.5x MSFT | 1.5x MSFT | 2x MSFT |
 | Phase 3 (Optimized) | 2x MSFT | 3x MSFT | 5x MSFT |
@@ -227,21 +235,25 @@ xperfview .\testdata\benchmarks\profiling_result.etl
 ## Troubleshooting
 
 ### Build Fails on Windows
+
 - Ensure Visual Studio Build Tools or Visual C++ are installed
 - `rustc --version` should report version info
 - `cargo --version` should work
 
 ### Test Data Generation is Slow
+
 - Use `-DataSize small` for faster initial testing
 - Run with SSD for better performance
 - Skip with `-SkipIntuneWinDownload` flag
 
 ### Memory Issues During Testing
+
 - Reduce `--chunk-size` in benchmarks
 - Use smaller test packages
 - Monitor with Task Manager
 
 ### Performance Differences Between Runs
+
 - Close other applications
 - Use same test package consistently
 - Run multiple iterations and average
@@ -276,7 +288,7 @@ cargo bloat --release
 
 ## Next Steps
 
-1. **Create Cargo project structure** (run `cargo init --name intunewin-rs`)
+1. **Validate local toolchain and repository checkout**
 2. **Implement CLI argument parsing** (using clap)
 3. **Build file enumerator** (recursive directory traversal)
 4. **Implement manifest generation** (XML output)

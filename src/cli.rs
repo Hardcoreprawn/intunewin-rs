@@ -1,6 +1,27 @@
 use clap::Parser;
 use std::path::PathBuf;
 
+fn parse_non_empty_setup(value: &str) -> std::result::Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err("setup file cannot be empty or whitespace".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn parse_positive_usize(value: &str) -> std::result::Result<usize, String> {
+    let parsed = value.parse::<usize>().map_err(|_| {
+        format!(
+            "invalid thread count '{}': expected a positive integer",
+            value
+        )
+    })?;
+    if parsed == 0 {
+        return Err("thread count must be >= 1".to_string());
+    }
+    Ok(parsed)
+}
+
 /// High-performance IntuneWin packager - compatible with Microsoft IntuneWinAppUtil
 #[derive(Parser, Debug, Clone)]
 #[command(name = "intunewin-rs")]
@@ -11,14 +32,14 @@ pub struct Args {
     pub content: PathBuf,
 
     /// Setup file name (the main installer executable)
-    #[arg(short = 's', long = "setup", required = true)]
+    #[arg(short = 's', long = "setup", required = true, value_parser = parse_non_empty_setup)]
     pub setup: String,
 
     /// Output folder for the .intunewin file
     #[arg(short = 'o', long = "output", required = true)]
     pub output: PathBuf,
 
-    /// Catalog folder (optional)
+    /// Catalog folder (reserved for Microsoft CLI compatibility; currently unsupported)
     #[arg(short = 'a', long = "catalog")]
     pub catalog: Option<PathBuf>,
 
@@ -31,7 +52,7 @@ pub struct Args {
     pub silent: bool,
 
     /// Number of threads for parallel processing (default: auto-detect)
-    #[arg(short = 't', long = "threads")]
+    #[arg(short = 't', long = "threads", value_parser = parse_positive_usize)]
     pub threads: Option<usize>,
 
     /// Compression level: 1-9 = DEFLATE, or 0 = store only
@@ -89,7 +110,12 @@ impl Args {
     ///
     /// Use --cache to force enable, --no-cache to force disable.
     pub fn use_cache(&self) -> bool {
-        let compression = self.compression.unwrap_or(0); // If None here, compression should have been auto-detected in main.rs; fall back to 0
+        let compression = self.compression.unwrap_or(0);
+        self.use_cache_with_compression(compression)
+    }
+
+    /// Returns true if caching should be used for a resolved compression level.
+    pub fn use_cache_with_compression(&self, compression: u32) -> bool {
         if self.no_cache {
             // Explicit disable always wins
             false

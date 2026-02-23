@@ -1,8 +1,4 @@
-<div align="center">
-
 # 🚀 intunewin-rs
-
-**A high-performance Rust implementation of Microsoft's Win32 Content Prep Tool**
 
 [![CI](https://github.com/hardcoreprawn/intunewin-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/hardcoreprawn/intunewin-rs/actions/workflows/ci.yml)
 [![Release](https://github.com/hardcoreprawn/intunewin-rs/actions/workflows/release.yml/badge.svg)](https://github.com/hardcoreprawn/intunewin-rs/actions/workflows/release.yml)
@@ -10,7 +6,7 @@
 
 [Installation](#-installation) •
 [Usage](#-usage) •
-[Performance](#-performance) •
+[Performance](#-performance-philosophy) •
 [Documentation](#-documentation) •
 [Contributing](#-contributing)
 
@@ -20,7 +16,9 @@
 
 ## ✨ Features
 
-- 🔄 **Drop-in Replacement** - 100% compatible with Microsoft IntuneWinAppUtil
+A high-performance Rust implementation of Microsoft's Win32 Content Prep Tool
+
+- 🔄 **Core CLI Compatibility** - Compatible with the Microsoft `-c/-s/-o` workflow
 - ⚡ **2.6x Faster** - Streaming architecture optimized for speed
 - 💾 **87% Less Memory** - Efficient I/O with per-file lazy-loading cache
 - 🖥️ **Cross-Platform** - Windows, Linux, and macOS support
@@ -36,7 +34,7 @@
 ### Verified Benchmark Results
 
 | Package | Size | Compression | No Cache | Warm Cache | Speedup | Time Saved |
-|:--------|:----:|:----------:|:--------:|:----------:|:-------:|:----------:|
+| ------- | ---- | ---------- | -------- | ---------- | ------- | ---------- |
 | **Small** | 0.02 MB | 6 | 0.5s | 0.03s | **16.7x** | 0.47s |
 | **Medium** | 254 MB | 6 | 5.51s | 1.44s | **3.8x** | 4.07s |
 | **Large** | 1.5 GB | 6 | 24.29s | 19.02s | **1.3x** | 5.27s |
@@ -45,7 +43,7 @@
 **Key Insight:** For large packages, **store-only mode (compression 0) is the recommended default for maximum initial speed**. The large-package results shown for compression 6 and 9 illustrate an alternative, size-optimized profile: when you choose higher compression to shrink upload size, enabling caching still provides meaningful 1.2–4x speedups on repeated builds.
 
 > **Philosophy:** Most installers (.exe, .msi) are already compressed. We prioritize speed and stability, especially for large packages.
-> 
+>
 > - **Speed-optimized (default for ≥ ~500 MB):** Use `--compression 0` (store-only) for maximum and predictable initial build speed.
 > - **Size-optimized (optional):** If you explicitly want smaller `.intunewin` files and can trade build time for size, use `--compression 6-9` together with `--cache` for 2–4x faster repeated builds compared to uncached compressed runs.
 
@@ -122,8 +120,8 @@ intunewin-rs -c ./installer -s setup.msi -o ./output -q
 # Silent mode (no output)
 intunewin-rs -c ./installer -s setup.exe -o ./output --qq
 
-# Include catalog folder for Windows 10 S mode
-intunewin-rs -c ./app -s setup.exe -o ./out -a ./catalog
+# Catalog support note
+# -a/--catalog is reserved for compatibility and currently returns an explicit "not implemented" error
 ```
 
 ### Smart Defaults by Package Size
@@ -153,7 +151,7 @@ intunewin-rs -c ./app -s setup.exe -o ./output --cache-stats    # Show cache inf
 Most installers (.exe, .msi, .cab) are already compressed. DEFLATE adds only 1-2% size reduction but enables 2-4x cache speedup:
 
 | Package | Size | Compression 0 | Compression 6 | Cache Enabled | Size Reduction | Repeat Speedup |
-|:--------|:----:|:-------------:|:-------------:|:-------------:|:--------------:|:---------------:|
+| ------- | ---- | ------------- | ------------- | ------------- | -------------- | --------------- |
 | Small | 0.02 MB | 0.5s | 0.03s | ❌ | 0% | N/A |
 | Medium | 254 MB | 1.51s | 5.51s | ✅ | 1.3% | **3.8x** |
 | Large | 1.5 GB | 7.91s | 24.29s | ✅ | 1.2% | **1.3x** |
@@ -163,7 +161,7 @@ Most installers (.exe, .msi, .cab) are already compressed. DEFLATE adds only 1-2
 - **<500MB packages**: Use smart defaults (compression 6). Cache provides 3-4x speedup on repeats.
 - **≥500MB packages**: Use smart defaults (compression 0) for initial speed. Cache won't help (no compression).
 - **Repeated builds**: Always use cache with compression 6-9 for 2-4x speedup.
-- **Very large packages (≥10GB)**: Must use `--compression 0` to avoid memory pressure.
+- **Large package safety**: Automatically switches to ZIP64 streaming mode for very large inputs to keep memory bounded and support >4 GiB/65k-entry cases.
 
 ### Incremental Caching for Repeated Builds ✅
 
@@ -191,7 +189,7 @@ intunewin-rs -c ./app -s setup.exe -o ./output --compression 6 --clear-cache
 **Verified cache performance (from production benchmarks):**
 
 | Package | Compression | No Cache | Cold Cache | Warm Cache | Speedup | Verified |
-|:--------|:-----------:|:--------:|:----------:|:----------:|:-------:|:--------:|
+| ------- | ----------- | -------- | ---------- | ---------- | ------- | -------- |
 | Medium (254 MB) | 6 | 5.51s | 5.51s | 1.44s | **3.83x** | ✅ |
 | Medium (254 MB) | 9 | 5.58s | 5.81s | 1.38s | **4.04x** | ✅ |
 | Large (1.5 GB) | 6 | 24.29s | 22.93s | 19.02s | **1.28x** | ✅ |
@@ -202,8 +200,8 @@ intunewin-rs -c ./app -s setup.exe -o ./output --compression 6 --clear-cache
 ### Full Command Reference
 
 ```text
-intunewin-rs 0.1.0
-High-performance IntuneWin packager - compatible with Microsoft IntuneWinAppUtil
+intunewin-rs 0.2.0
+High-performance IntuneWin packager for Intune app deployment
 
 USAGE:
     intunewin-rs [OPTIONS] -c <CONTENT> -s <SETUP> -o <OUTPUT>
@@ -212,7 +210,7 @@ OPTIONS:
     -c, --content <CONTENT>        Source folder containing the setup files
     -s, --setup <SETUP>            Setup file name (the main installer executable)
     -o, --output <OUTPUT>          Output folder for the .intunewin file
-    -a, --catalog <CATALOG>        Catalog folder (optional, for Win10 S mode)
+    -a, --catalog <CATALOG>        Catalog folder (reserved for compatibility; currently unsupported)
     -q, --quiet                    Quiet mode - minimal output
         --qq                       Silent mode - no output
     -t, --threads <THREADS>        Number of threads (default: auto-detect)
@@ -236,7 +234,7 @@ Source Folder                    Output (.intunewin)
 │ config.ini  │    Package       │ │   ├── Metadata/Detection.xml      │
 │ readme.txt  │                  │ │   └── Contents/                   │
 └─────────────┘                  │ │       └── IntunePackage.intunewin │
-                                 │ └──────────────────────────────────│
+                                 │ └────────────────────────────────── │
                                  └─────────────────────────────────────┘
                                            ▲
                                            │
@@ -276,7 +274,7 @@ Source Files
 2. **Per-File Lazy Loading**: Cache stores individual compressed files, loaded on-demand
 3. **Memory Efficiency**: 87% less memory than MSFT tool through streaming architecture
 4. **Smart Caching**: Auto-disabled for compression=0 (no benefit), auto-enabled for compression≥1 (2-3x speedup)
-5. **Backward Compatible**: 100% compatible with Microsoft's format, can read all existing .intunewin files
+5. **Compatibility-First**: Core packaging workflow is Microsoft-compatible; unsupported paths fail explicitly
 
 ### Directory Structure
 
@@ -298,9 +296,10 @@ intunewin-rs/
 ## 📖 Documentation
 
 | Document | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | High-level design philosophy and decisions |
 | [SPECIFICATION.md](docs/SPECIFICATION.md) | Technical specification |
+| [COMPATIBILITY.md](docs/COMPATIBILITY.md) | Current compatibility contract and support matrix |
 | [SMART_DEFAULTS.md](docs/SMART_DEFAULTS.md) | Smart compression defaults explained |
 | [CACHE_ARCHITECTURE.md](docs/CACHE_ARCHITECTURE.md) | Cache design and per-file streaming |
 | [BUILD_AND_TEST.md](docs/BUILD_AND_TEST.md) | Development guide |
@@ -388,8 +387,6 @@ This project is licensed under the [MIT License](LICENSE).
 - [Rayon](https://github.com/rayon-rs/rayon) - Data parallelism
 
 ---
-
-<div align="center">
 
 **⭐ Star this repo if you find it useful!**
 

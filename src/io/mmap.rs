@@ -71,7 +71,13 @@ fn read_with_mmap(file: &File, path: &Path) -> Result<Vec<u8>> {
 /// Reads a file using standard I/O with pre-allocated buffer.
 fn read_standard(file: &File, path: &Path, size: u64) -> Result<Vec<u8>> {
     let mut reader = std::io::BufReader::new(file);
-    let mut buffer = Vec::with_capacity(size as usize);
+    let capacity = usize::try_from(size).map_err(|_| {
+        IntunewinError::InvalidInput(format!(
+            "File '{}' is too large to fit into memory on this platform",
+            path.display()
+        ))
+    })?;
+    let mut buffer = Vec::with_capacity(capacity);
 
     reader
         .read_to_end(&mut buffer)
