@@ -34,6 +34,9 @@ const BATCH_SIZE_BYTES: u64 = 500 * 1024 * 1024;
 const ZIP32_MAX_U32: u64 = u32::MAX as u64;
 const ZIP32_MAX_ENTRY_COUNT: usize = u16::MAX as usize;
 const ZIP32_MAX_NAME_LEN: usize = u16::MAX as usize;
+/// Current compression path loads each file fully into memory.
+/// Guard with a conservative safety cap until true per-file streaming compression is implemented.
+const MAX_IN_MEMORY_FILE_SIZE: u64 = 1024 * 1024 * 1024; // 1 GiB
 
 fn zip32_limit_error(field: &str, value: u64, limit: u64) -> IntunewinError {
     IntunewinError::CompressionError(format!(
@@ -48,6 +51,28 @@ fn checked_u32(value: u64, field: &str) -> Result<u32> {
 
 fn checked_u16_from_usize(value: usize, field: &str) -> Result<u16> {
     u16::try_from(value).map_err(|_| zip32_limit_error(field, value as u64, u16::MAX as u64))
+}
+
+fn validate_file_constraints(entry: &FileEntry) -> Result<()> {
+    if entry.size > ZIP32_MAX_U32 {
+        return Err(zip32_limit_error(
+            "input file size",
+            entry.size,
+            ZIP32_MAX_U32,
+        ));
+    }
+
+    if entry.size > MAX_IN_MEMORY_FILE_SIZE {
+        return Err(IntunewinError::CompressionError(format!(
+            "Input file '{}' is {} bytes, exceeding current in-memory compression safety cap of {} bytes. \
+             Use smaller chunks/files for now; true per-file streaming compression for larger single files is not implemented yet.",
+            entry.relative_path.display(),
+            entry.size,
+            MAX_IN_MEMORY_FILE_SIZE
+        )));
+    }
+
+    Ok(())
 }
 
 /// Pre-compressed file ready for ZIP assembly
@@ -80,6 +105,8 @@ fn compress_file(
     progress_bytes: Option<&Arc<AtomicU64>>,
     progress_bar: Option<&ProgressBar>,
 ) -> Result<CompressedEntry> {
+    validate_file_constraints(entry)?;
+
     // Read file
     let data = read_file_smart(&entry.absolute_path, use_mmap)?;
 
@@ -524,6 +551,7 @@ pub fn compress_to_inner_zip(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn checked_u32_accepts_limit_value() {
@@ -538,5 +566,31 @@ mod tests {
     #[test]
     fn checked_u16_from_usize_rejects_overflow() {
         assert!(checked_u16_from_usize(u16::MAX as usize + 1, "entry count").is_err());
+    }
+
+    #[test]
+    fn validate_file_constraints_rejects_zip32_oversize_file() {
+        let entry = FileEntry {
+            relative_path: PathBuf::from("big.bin"),
+            absolute_path: PathBuf::from("big.bin"),
+            size: ZIP32_MAX_U32 + 1,
+            is_setup_file: false,
+            normalized_path: "big.bin".to_string(),
+        };
+
+        assert!(validate_file_constraints(&entry).is_err());
+    }
+
+    #[test]
+    fn validate_file_constraints_rejects_in_memory_cap_oversize_file() {
+        let entry = FileEntry {
+            relative_path: PathBuf::from("huge.bin"),
+            absolute_path: PathBuf::from("huge.bin"),
+            size: MAX_IN_MEMORY_FILE_SIZE + 1,
+            is_setup_file: false,
+            normalized_path: "huge.bin".to_string(),
+        };
+
+        assert!(validate_file_constraints(&entry).is_err());
     }
 }
