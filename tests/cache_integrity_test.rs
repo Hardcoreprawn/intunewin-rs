@@ -37,7 +37,6 @@ fn get_file_hash(path: &PathBuf) -> String {
 }
 
 #[test]
-#[ignore] // Only run with --ignored flag or when explicitly needed
 fn test_cache_integrity_small_package() {
     // Use existing test data if available, otherwise generate minimal test data
     let test_data_path = PathBuf::from("testdata/packages/small");

@@ -84,7 +84,7 @@ jobs:
         continue-on-error: ${{ matrix.rust == 'beta' }}
 
       - name: Run cache integrity tests (critical)
-        run: cargo test --release -- --ignored cache_integrity --nocapture
+        run: cargo test --release cache_integrity -- --nocapture
         continue-on-error: ${{ matrix.rust == 'beta' }}
 
   docs:
