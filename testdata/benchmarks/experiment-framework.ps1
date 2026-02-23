@@ -91,9 +91,12 @@ function Invoke-BenchmarkCommand {
             $peakWorkingSet = $proc.WorkingSet64
         }
 
+        $proc.WaitForExit()
+        $proc.Refresh()
+
         $elapsedMs = ((Get-Date) - $start).TotalMilliseconds
         return [PSCustomObject]@{
-            ExitCode = $proc.ExitCode
+            ExitCode = [int]$proc.ExitCode
             DurationMs = [math]::Round($elapsedMs, 2)
             PeakWorkingSetMB = [math]::Round($peakWorkingSet / 1MB, 2)
             CpuTimeMs = [math]::Round($proc.TotalProcessorTime.TotalMilliseconds, 2)
