@@ -51,6 +51,8 @@ pub fn run(args: &Args) -> Result<()> {
         ));
     }
 
+    validate_output_not_within_content(&args.content, &args.output)?;
+
     let compression = resolve_compression_level(args)?;
     let use_cache = args.use_cache_with_compression(compression);
     let stages = if use_cache {
@@ -398,10 +400,59 @@ fn calculate_folder_size(path: &std::path::Path) -> Result<u64> {
     Ok(total_size)
 }
 
+fn validate_output_not_within_content(
+    content: &std::path::Path,
+    output: &std::path::Path,
+) -> Result<()> {
+    let content_abs = content.canonicalize().map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to resolve content path '{}': {}",
+            content.display(),
+            e
+        )
+    })?;
+
+    let output_abs = resolve_path_for_compare(output).map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to resolve output path '{}': {}",
+            output.display(),
+            e
+        )
+    })?;
+
+    if output_abs.starts_with(&content_abs) {
+        return Err(anyhow::anyhow!(
+            "Output directory '{}' must not be inside content directory '{}'. Choose an output path outside content to avoid recursive/self-inclusion hazards.",
+            output.display(),
+            content.display()
+        ));
+    }
+
+    Ok(())
+}
+
+fn resolve_path_for_compare(path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    if path.exists() {
+        return path.canonicalize();
+    }
+
+    let cwd = std::env::current_dir()?;
+    Ok(cwd.join(path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::io::Write;
+    use std::path::PathBuf;
+
+    fn create_temp_dir(prefix: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("{}_{}", prefix, std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
 
     #[test]
     fn resolve_compression_uses_explicit_value() {
@@ -457,5 +508,29 @@ mod tests {
 
         let _ = std::fs::remove_file(file_path);
         let _ = std::fs::remove_dir(temp_dir);
+    }
+
+    #[test]
+    fn validate_output_not_within_content_rejects_nested_output() {
+        let content = create_temp_dir("pipeline_content_nested");
+        let output = content.join("out");
+        fs::create_dir_all(&output).unwrap();
+
+        let result = validate_output_not_within_content(&content, &output);
+        assert!(result.is_err());
+
+        let _ = fs::remove_dir_all(content);
+    }
+
+    #[test]
+    fn validate_output_not_within_content_allows_separate_output() {
+        let content = create_temp_dir("pipeline_content_separate");
+        let output = create_temp_dir("pipeline_output_separate");
+
+        let result = validate_output_not_within_content(&content, &output);
+        assert!(result.is_ok());
+
+        let _ = fs::remove_dir_all(content);
+        let _ = fs::remove_dir_all(output);
     }
 }

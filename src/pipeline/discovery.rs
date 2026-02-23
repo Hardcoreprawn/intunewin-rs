@@ -1,6 +1,7 @@
 //! File discovery module for scanning content folders.
 
 use rayon::prelude::*;
+use std::path::Component;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -73,11 +74,7 @@ pub fn discover(content_folder: &Path, setup_file: &str) -> Result<DiscoveryResu
                 source: e,
             })?;
 
-    let setup_input_normalized = setup_file.replace('\\', "/");
-    let setup_basename = Path::new(&setup_input_normalized)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| setup_input_normalized.clone());
+    let (setup_input_normalized, setup_basename) = sanitize_setup_input(setup_file)?;
 
     // Phase 1: Walk directory to collect file paths (sequential due to directory iteration)
     let mut raw_files = Vec::new();
@@ -218,6 +215,56 @@ pub fn discover(content_folder: &Path, setup_file: &str) -> Result<DiscoveryResu
     })
 }
 
+fn sanitize_setup_input(setup_file: &str) -> Result<(String, String)> {
+    let trimmed = setup_file.trim();
+    if trimmed.is_empty() {
+        return Err(IntunewinError::InvalidInput(
+            "Setup file cannot be empty or whitespace".to_string(),
+        ));
+    }
+
+    let setup_path = Path::new(trimmed);
+    if setup_path.is_absolute() {
+        return Err(IntunewinError::InvalidInput(format!(
+            "Setup file must be a relative path, got absolute path: '{}'",
+            setup_file
+        )));
+    }
+
+    let mut components: Vec<String> = Vec::new();
+    for component in setup_path.components() {
+        match component {
+            Component::CurDir => {
+                // Skip leading or embedded '.' segments as input-cleaning.
+            }
+            Component::Normal(part) => components.push(part.to_string_lossy().to_string()),
+            Component::ParentDir => {
+                return Err(IntunewinError::InvalidInput(format!(
+                    "Setup file path must not contain '..': '{}'",
+                    setup_file
+                )));
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(IntunewinError::InvalidInput(format!(
+                    "Setup file must be a relative path without drive/root prefix: '{}'",
+                    setup_file
+                )));
+            }
+        }
+    }
+
+    if components.is_empty() {
+        return Err(IntunewinError::InvalidInput(format!(
+            "Setup file path '{}' does not contain a valid file name",
+            setup_file
+        )));
+    }
+
+    let normalized = components.join("/");
+    let basename = components.last().cloned().unwrap_or_default();
+    Ok((normalized, basename))
+}
+
 /// Formats a byte size as a human-readable string.
 pub fn format_size(bytes: u64) -> String {
     const KB: u64 = 1024;
@@ -295,6 +342,32 @@ mod tests {
         let result = discover(&root, "b/setup.exe").unwrap();
         let selected = result.setup_file();
         assert_eq!(selected.normalized_path, "b/setup.exe");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn discover_rejects_setup_parent_dir_component() {
+        let root = create_test_tree("discover_parent_dir_reject");
+        let mut f = File::create(root.join("setup.exe")).unwrap();
+        f.write_all(b"one").unwrap();
+
+        let result = discover(&root, "../setup.exe");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("must not contain '..'"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn discover_allows_and_cleans_dot_prefix_setup_path() {
+        let root = create_test_tree("discover_dot_prefix");
+        let mut f = File::create(root.join("setup.exe")).unwrap();
+        f.write_all(b"one").unwrap();
+
+        let result = discover(&root, "./setup.exe").unwrap();
+        assert_eq!(result.setup_file().normalized_path, "setup.exe");
 
         let _ = fs::remove_dir_all(root);
     }
