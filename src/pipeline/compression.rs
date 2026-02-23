@@ -30,6 +30,26 @@ use crate::pipeline::discovery::{DiscoveryResult, FileEntry};
 /// After compressing this much data, we flush to disk
 const BATCH_SIZE_BYTES: u64 = 500 * 1024 * 1024;
 
+/// ZIP32 limits (ZIP64 not implemented in the custom inner ZIP writer yet)
+const ZIP32_MAX_U32: u64 = u32::MAX as u64;
+const ZIP32_MAX_ENTRY_COUNT: usize = u16::MAX as usize;
+const ZIP32_MAX_NAME_LEN: usize = u16::MAX as usize;
+
+fn zip32_limit_error(field: &str, value: u64, limit: u64) -> IntunewinError {
+    IntunewinError::CompressionError(format!(
+        "ZIP32 limit exceeded for {}: {} > {} (ZIP64 is not implemented for inner ZIP writing)",
+        field, value, limit
+    ))
+}
+
+fn checked_u32(value: u64, field: &str) -> Result<u32> {
+    u32::try_from(value).map_err(|_| zip32_limit_error(field, value, ZIP32_MAX_U32))
+}
+
+fn checked_u16_from_usize(value: usize, field: &str) -> Result<u16> {
+    u16::try_from(value).map_err(|_| zip32_limit_error(field, value as u64, u16::MAX as u64))
+}
+
 /// Pre-compressed file ready for ZIP assembly
 struct CompressedEntry {
     relative_path: String,
@@ -65,7 +85,7 @@ fn compress_file(
 
     // CRC32 of original data
     let crc32 = crc32fast::hash(&data);
-    let uncompressed_size = data.len() as u32;
+    let uncompressed_size = checked_u32(data.len() as u64, "uncompressed file size")?;
 
     // Use the cached normalized path (computed during discovery)
     let relative_path = entry.normalized_path.clone();
@@ -128,7 +148,7 @@ struct ZipEntryInfo {
     crc32: u32,
     compressed_size: u32,
     uncompressed_size: u32,
-    local_header_offset: u64,
+    local_header_offset: u32,
     compression_method: u16,
 }
 
@@ -146,13 +166,32 @@ impl StreamingZipWriter {
 
     /// Write a single compressed entry
     fn write_entry(&mut self, entry: CompressedEntry) -> Result<()> {
+        if self.entries.len() >= ZIP32_MAX_ENTRY_COUNT {
+            return Err(IntunewinError::CompressionError(format!(
+                "Too many files for ZIP32: {} (max {}). ZIP64 is not implemented for inner ZIP writing.",
+                self.entries.len() + 1,
+                ZIP32_MAX_ENTRY_COUNT
+            )));
+        }
+
         let offset = self
             .file
             .stream_position()
             .map_err(|e| IntunewinError::CompressionError(e.to_string()))?;
+        let local_header_offset = checked_u32(offset, "local header offset")?;
 
         let name_bytes = entry.relative_path.as_bytes();
-        let compressed_size = entry.compressed_data.len() as u32;
+        if name_bytes.len() > ZIP32_MAX_NAME_LEN {
+            return Err(IntunewinError::CompressionError(format!(
+                "File name too long for ZIP32: {} bytes (max {})",
+                name_bytes.len(),
+                ZIP32_MAX_NAME_LEN
+            )));
+        }
+
+        let compressed_size =
+            checked_u32(entry.compressed_data.len() as u64, "compressed file size")?;
+        let file_name_len = checked_u16_from_usize(name_bytes.len(), "file name length")?;
 
         // Local file header (30 bytes + filename)
         self.file.write_all(&0x04034b50u32.to_le_bytes())?; // Signature
@@ -166,8 +205,7 @@ impl StreamingZipWriter {
         self.file.write_all(&compressed_size.to_le_bytes())?;
         self.file
             .write_all(&entry.uncompressed_size.to_le_bytes())?;
-        self.file
-            .write_all(&(name_bytes.len() as u16).to_le_bytes())?;
+        self.file.write_all(&file_name_len.to_le_bytes())?;
         self.file.write_all(&0u16.to_le_bytes())?; // Extra field length
         self.file.write_all(name_bytes)?;
         self.file.write_all(&entry.compressed_data)?;
@@ -178,7 +216,7 @@ impl StreamingZipWriter {
             crc32: entry.crc32,
             compressed_size,
             uncompressed_size: entry.uncompressed_size,
-            local_header_offset: offset,
+            local_header_offset,
             compression_method: entry.compression_method,
         });
 
@@ -187,14 +225,33 @@ impl StreamingZipWriter {
 
     /// Finalize the ZIP by writing central directory
     fn finish(mut self) -> Result<()> {
+        if self.entries.len() > ZIP32_MAX_ENTRY_COUNT {
+            return Err(IntunewinError::CompressionError(format!(
+                "Too many files for ZIP32: {} (max {})",
+                self.entries.len(),
+                ZIP32_MAX_ENTRY_COUNT
+            )));
+        }
+
+        let entry_count = checked_u16_from_usize(self.entries.len(), "entry count")?;
+
         let cd_offset = self
             .file
             .stream_position()
             .map_err(|e| IntunewinError::CompressionError(e.to_string()))?;
+        let cd_offset_u32 = checked_u32(cd_offset, "central directory offset")?;
 
         // Write central directory entries
         for entry in &self.entries {
             let name_bytes = entry.relative_path.as_bytes();
+            if name_bytes.len() > ZIP32_MAX_NAME_LEN {
+                return Err(IntunewinError::CompressionError(format!(
+                    "File name too long for ZIP32: {} bytes (max {})",
+                    name_bytes.len(),
+                    ZIP32_MAX_NAME_LEN
+                )));
+            }
+            let file_name_len = checked_u16_from_usize(name_bytes.len(), "file name length")?;
 
             self.file.write_all(&0x02014b50u32.to_le_bytes())?; // Signature
             self.file.write_all(&20u16.to_le_bytes())?; // Version made by
@@ -208,15 +265,14 @@ impl StreamingZipWriter {
             self.file.write_all(&entry.compressed_size.to_le_bytes())?;
             self.file
                 .write_all(&entry.uncompressed_size.to_le_bytes())?;
-            self.file
-                .write_all(&(name_bytes.len() as u16).to_le_bytes())?;
+            self.file.write_all(&file_name_len.to_le_bytes())?;
             self.file.write_all(&0u16.to_le_bytes())?; // Extra field length
             self.file.write_all(&0u16.to_le_bytes())?; // Comment length
             self.file.write_all(&0u16.to_le_bytes())?; // Disk number
             self.file.write_all(&0u16.to_le_bytes())?; // Internal attrs
             self.file.write_all(&0u32.to_le_bytes())?; // External attrs
             self.file
-                .write_all(&(entry.local_header_offset as u32).to_le_bytes())?;
+                .write_all(&entry.local_header_offset.to_le_bytes())?;
             self.file.write_all(name_bytes)?;
         }
 
@@ -225,17 +281,16 @@ impl StreamingZipWriter {
             .stream_position()
             .map_err(|e| IntunewinError::CompressionError(e.to_string()))?
             - cd_offset;
+        let cd_size_u32 = checked_u32(cd_size, "central directory size")?;
 
         // End of central directory record
         self.file.write_all(&0x06054b50u32.to_le_bytes())?; // Signature
         self.file.write_all(&0u16.to_le_bytes())?; // Disk number
         self.file.write_all(&0u16.to_le_bytes())?; // CD start disk
-        self.file
-            .write_all(&(self.entries.len() as u16).to_le_bytes())?;
-        self.file
-            .write_all(&(self.entries.len() as u16).to_le_bytes())?;
-        self.file.write_all(&(cd_size as u32).to_le_bytes())?;
-        self.file.write_all(&(cd_offset as u32).to_le_bytes())?;
+        self.file.write_all(&entry_count.to_le_bytes())?;
+        self.file.write_all(&entry_count.to_le_bytes())?;
+        self.file.write_all(&cd_size_u32.to_le_bytes())?;
+        self.file.write_all(&cd_offset_u32.to_le_bytes())?;
         self.file.write_all(&0u16.to_le_bytes())?; // Comment length
 
         self.file.flush()?;
@@ -299,6 +354,14 @@ pub fn compress_to_inner_zip_cached(
     progress_bar: Option<&ProgressBar>,
     mut cache: Option<&mut CacheManager>,
 ) -> Result<CompressionResult> {
+    if discovery.files.len() > ZIP32_MAX_ENTRY_COUNT {
+        return Err(IntunewinError::CompressionError(format!(
+            "Input contains {} files, which exceeds ZIP32 limit of {} entries. ZIP64 is not implemented for inner ZIP writing.",
+            discovery.files.len(),
+            ZIP32_MAX_ENTRY_COUNT
+        )));
+    }
+
     if !output_path.exists() {
         std::fs::create_dir_all(output_path).map_err(|e| IntunewinError::FileWriteError {
             path: output_path.to_path_buf(),
@@ -456,4 +519,24 @@ pub fn compress_to_inner_zip(
         None,
     )?;
     Ok(result.zip_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checked_u32_accepts_limit_value() {
+        assert_eq!(checked_u32(u32::MAX as u64, "field").unwrap(), u32::MAX);
+    }
+
+    #[test]
+    fn checked_u32_rejects_overflow() {
+        assert!(checked_u32(u32::MAX as u64 + 1, "field").is_err());
+    }
+
+    #[test]
+    fn checked_u16_from_usize_rejects_overflow() {
+        assert!(checked_u16_from_usize(u16::MAX as usize + 1, "entry count").is_err());
+    }
 }

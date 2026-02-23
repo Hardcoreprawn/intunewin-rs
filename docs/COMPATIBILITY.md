@@ -32,3 +32,12 @@ This document defines what `intunewin-rs` currently supports relative to Microso
 `intunewin-rs` aims to be command-compatible for the core packaging workflow (`-c/-s/-o`) and format-compatible for generated `.intunewin` output used in Intune upload flows.
 
 Features listed as not implemented are rejected explicitly at runtime to avoid silent behavior differences.
+
+## Current Inner ZIP Limits
+
+The custom inner ZIP writer currently enforces ZIP32 limits (ZIP64 not yet implemented in this path):
+
+- Maximum files: `65,535`
+- Maximum size for ZIP32 fields (offset/entry size/central-directory size): `4,294,967,295` bytes
+
+When these limits are exceeded, the build fails with an explicit error instead of producing truncated/corrupt output.

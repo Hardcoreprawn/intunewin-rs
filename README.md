@@ -161,7 +161,7 @@ Most installers (.exe, .msi, .cab) are already compressed. DEFLATE adds only 1-2
 - **<500MB packages**: Use smart defaults (compression 6). Cache provides 3-4x speedup on repeats.
 - **≥500MB packages**: Use smart defaults (compression 0) for initial speed. Cache won't help (no compression).
 - **Repeated builds**: Always use cache with compression 6-9 for 2-4x speedup.
-- **Very large packages (≥10GB)**: Must use `--compression 0` to avoid memory pressure.
+- **Inner ZIP limits**: Current writer enforces ZIP32 limits (max 65,535 files and 4 GiB ZIP32 fields); builds fail explicitly when exceeded.
 
 ### Incremental Caching for Repeated Builds ✅
 
@@ -234,7 +234,7 @@ Source Folder                    Output (.intunewin)
 │ config.ini  │    Package       │ │   ├── Metadata/Detection.xml      │
 │ readme.txt  │                  │ │   └── Contents/                   │
 └─────────────┘                  │ │       └── IntunePackage.intunewin │
-                                 │ └──────────────────────────────────│
+                                 │ └────────────────────────────────── │
                                  └─────────────────────────────────────┘
                                            ▲
                                            │
