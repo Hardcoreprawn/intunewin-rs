@@ -33,11 +33,11 @@ This document defines what `intunewin-rs` currently supports relative to Microso
 
 Features listed as not implemented are rejected explicitly at runtime to avoid silent behavior differences.
 
-## Current Inner ZIP Limits
+## Large Package Behavior
 
-The custom inner ZIP writer currently enforces ZIP32 limits (ZIP64 not yet implemented in this path):
+`intunewin-rs` uses two inner ZIP write paths:
 
-- Maximum files: `65,535`
-- Maximum size for ZIP32 fields (offset/entry size/central-directory size): `4,294,967,295` bytes
+- **Default path**: ZIP32-oriented fast path with caching/parallel compression.
+- **Automatic fallback**: ZIP64 streaming path for very large inputs (for example, >65,535 files, >4 GiB ZIP32 field limits, or oversized single-file in-memory risk).
 
-When these limits are exceeded, the build fails with an explicit error instead of producing truncated/corrupt output.
+The fallback keeps memory bounded by streaming file content instead of loading entire large files into memory.

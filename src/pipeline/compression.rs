@@ -11,7 +11,7 @@
 //! recompressing unchanged files on subsequent builds.
 
 use std::fs::File;
-use std::io::{Seek, Write};
+use std::io::{BufReader, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -20,6 +20,9 @@ use flate2::write::DeflateEncoder;
 use flate2::Compression;
 use indicatif::ProgressBar;
 use rayon::prelude::*;
+use zip::write::SimpleFileOptions;
+use zip::CompressionMethod;
+use zip::ZipWriter;
 
 use crate::cache::{CacheManager, CacheResult, CachedCompressedData};
 use crate::error::{IntunewinError, Result};
@@ -37,6 +40,7 @@ const ZIP32_MAX_NAME_LEN: usize = u16::MAX as usize;
 /// Current compression path loads each file fully into memory.
 /// Guard with a conservative safety cap until true per-file streaming compression is implemented.
 const MAX_IN_MEMORY_FILE_SIZE: u64 = 1024 * 1024 * 1024; // 1 GiB
+const STREAM_BUFFER_SIZE: usize = 64 * 1024;
 
 fn zip32_limit_error(field: &str, value: u64, limit: u64) -> IntunewinError {
     IntunewinError::CompressionError(format!(
@@ -73,6 +77,15 @@ fn validate_file_constraints(entry: &FileEntry) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn needs_zip64_streaming(discovery: &DiscoveryResult) -> bool {
+    discovery.files.len() > ZIP32_MAX_ENTRY_COUNT
+        || discovery.files.iter().any(|f| f.size > ZIP32_MAX_U32)
+        || discovery
+            .files
+            .iter()
+            .any(|f| f.size > MAX_IN_MEMORY_FILE_SIZE)
 }
 
 /// Pre-compressed file ready for ZIP assembly
@@ -381,14 +394,6 @@ pub fn compress_to_inner_zip_cached(
     progress_bar: Option<&ProgressBar>,
     mut cache: Option<&mut CacheManager>,
 ) -> Result<CompressionResult> {
-    if discovery.files.len() > ZIP32_MAX_ENTRY_COUNT {
-        return Err(IntunewinError::CompressionError(format!(
-            "Input contains {} files, which exceeds ZIP32 limit of {} entries. ZIP64 is not implemented for inner ZIP writing.",
-            discovery.files.len(),
-            ZIP32_MAX_ENTRY_COUNT
-        )));
-    }
-
     if !output_path.exists() {
         std::fs::create_dir_all(output_path).map_err(|e| IntunewinError::FileWriteError {
             path: output_path.to_path_buf(),
@@ -404,6 +409,29 @@ pub fn compress_to_inner_zip_cached(
         .unwrap_or_else(|| "IntunePackage".to_string());
 
     let zip_path = output_path.join(format!("{}.zip", setup_name));
+    let cache_enabled = cache.is_some();
+
+    // Safety-first fallback for large inputs: use ZIP64-capable streaming writer
+    // to keep memory bounded and support sizes/counts beyond ZIP32 limits.
+    if needs_zip64_streaming(discovery) {
+        compress_to_inner_zip_zip64_streaming(
+            discovery,
+            &zip_path,
+            compression_level,
+            progress_bar,
+        )?;
+
+        return Ok(CompressionResult {
+            zip_path,
+            cache_hits: 0,
+            cache_misses: if cache_enabled {
+                discovery.file_count
+            } else {
+                0
+            },
+            bytes_saved: 0,
+        });
+    }
 
     // Create streaming ZIP writer
     let mut zip_writer = StreamingZipWriter::new(&zip_path)?;
@@ -519,6 +547,70 @@ pub fn compress_to_inner_zip_cached(
     })
 }
 
+fn compress_to_inner_zip_zip64_streaming(
+    discovery: &DiscoveryResult,
+    zip_path: &Path,
+    compression_level: u32,
+    progress_bar: Option<&ProgressBar>,
+) -> Result<()> {
+    let file = File::create(zip_path).map_err(|e| IntunewinError::FileWriteError {
+        path: zip_path.to_path_buf(),
+        source: e,
+    })?;
+
+    let mut zip = ZipWriter::new(file);
+    let method = if compression_level == 0 {
+        CompressionMethod::Stored
+    } else {
+        CompressionMethod::Deflated
+    };
+
+    let options = SimpleFileOptions::default()
+        .compression_method(method)
+        .large_file(true);
+
+    let mut buffer = vec![0u8; STREAM_BUFFER_SIZE];
+    let mut progress_bytes = 0u64;
+
+    for entry in &discovery.files {
+        zip.start_file(entry.normalized_path.clone(), options)
+            .map_err(|e| IntunewinError::ZipError(e.to_string()))?;
+
+        let source =
+            File::open(&entry.absolute_path).map_err(|e| IntunewinError::FileReadError {
+                path: entry.absolute_path.clone(),
+                source: e,
+            })?;
+        let mut reader = BufReader::new(source);
+
+        loop {
+            let read_bytes =
+                reader
+                    .read(&mut buffer)
+                    .map_err(|e| IntunewinError::FileReadError {
+                        path: entry.absolute_path.clone(),
+                        source: e,
+                    })?;
+            if read_bytes == 0 {
+                break;
+            }
+
+            zip.write_all(&buffer[..read_bytes])
+                .map_err(|e| IntunewinError::CompressionError(e.to_string()))?;
+
+            if let Some(pb) = progress_bar {
+                progress_bytes += read_bytes as u64;
+                pb.set_position(progress_bytes);
+            }
+        }
+    }
+
+    zip.finish()
+        .map_err(|e| IntunewinError::ZipError(e.to_string()))?;
+
+    Ok(())
+}
+
 /// Creates the inner ZIP file with parallel compression and streaming writes.
 ///
 /// Memory optimization: Files are processed in batches. Each batch is compressed
@@ -566,6 +658,29 @@ mod tests {
     #[test]
     fn checked_u16_from_usize_rejects_overflow() {
         assert!(checked_u16_from_usize(u16::MAX as usize + 1, "entry count").is_err());
+    }
+
+    #[test]
+    fn needs_zip64_streaming_when_entry_count_exceeds_zip32() {
+        let mut files = Vec::new();
+        for i in 0..(ZIP32_MAX_ENTRY_COUNT + 1) {
+            files.push(FileEntry {
+                relative_path: PathBuf::from(format!("f{}.bin", i)),
+                absolute_path: PathBuf::from(format!("f{}.bin", i)),
+                size: 1,
+                is_setup_file: i == 0,
+                normalized_path: format!("f{}.bin", i),
+            });
+        }
+
+        let discovery = DiscoveryResult {
+            file_count: files.len(),
+            total_size: files.len() as u64,
+            setup_file_index: 0,
+            files,
+        };
+
+        assert!(needs_zip64_streaming(&discovery));
     }
 
     #[test]

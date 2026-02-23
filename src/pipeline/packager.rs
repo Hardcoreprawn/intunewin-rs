@@ -74,8 +74,9 @@ pub fn create_intunewin(
 
     // Add Detection.xml - stored uncompressed as per Microsoft format
     // Path: IntuneWinPackage/Metadata/Detection.xml
-    let detection_options =
-        SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+    let detection_options = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Stored)
+        .large_file(true);
 
     zip.start_file("IntuneWinPackage/Metadata/Detection.xml", detection_options)
         .map_err(|e| IntunewinError::ZipError(e.to_string()))?;
@@ -86,8 +87,9 @@ pub fn create_intunewin(
     // Add encrypted content blob
     // Path: IntuneWinPackage/Contents/IntunePackage.intunewin
     // Use stored (no compression) since the content is already encrypted
-    let content_options =
-        SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+    let content_options = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Stored)
+        .large_file(true);
 
     zip.start_file(
         "IntuneWinPackage/Contents/IntunePackage.intunewin",
