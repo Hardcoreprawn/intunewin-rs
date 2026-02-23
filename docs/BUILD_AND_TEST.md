@@ -226,7 +226,7 @@ xperfview .\testdata\benchmarks\profiling_result.etl
 ## Performance Targets
 
 | Milestone | Small (100MB) | Medium (2.5GB) | Large (20GB) |
-| --------- | --------------|----------------|--------------|
+| --------- | ------------- | -------------- | ------------ |
 | Phase 1 (MVP) | 1x MSFT | 0.8x MSFT | N/A |
 | Phase 2 (Parallel) | 1.5x MSFT | 1.5x MSFT | 2x MSFT |
 | Phase 3 (Optimized) | 2x MSFT | 3x MSFT | 5x MSFT |
