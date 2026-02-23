@@ -180,6 +180,20 @@ inherits = "release"
 
 ## Benchmarking Strategy
 
+### Experiment Framework (Issue #75)
+
+Use the shared harness to evaluate candidate experiment branches with the same metrics and decision gates.
+
+```powershell
+# Build release binary first
+cargo build --release
+
+# Run framework baseline/candidate comparison
+.\testdata\benchmarks\experiment-framework.ps1
+```
+
+For advanced usage and command-template overrides, see `docs/EXPERIMENT_FRAMEWORK.md`.
+
 ### Phase 1: Baseline
 
 ```powershell
