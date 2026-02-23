@@ -87,6 +87,11 @@ jobs:
         run: cargo test --release cache_integrity -- --nocapture
         continue-on-error: ${{ matrix.rust == 'beta' }}
 
+      - name: Pre-Intune validation gate (no tenant required)
+        if: matrix.os == 'windows-latest' && matrix.rust == 'stable'
+        shell: pwsh
+        run: .\tests\pre-intune-validation-gate.ps1
+
   docs:
     name: Documentation
     needs: check

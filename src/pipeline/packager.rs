@@ -22,6 +22,12 @@ use zip::ZipWriter;
 
 use crate::error::{IntunewinError, Result};
 
+const ZIP32_MAX_SIZE: u64 = u32::MAX as u64;
+
+fn requires_zip64(size_bytes: u64) -> bool {
+    size_bytes > ZIP32_MAX_SIZE
+}
+
 /// Creates the final .intunewin package (outer ZIP).
 ///
 /// # Arguments
@@ -72,11 +78,19 @@ pub fn create_intunewin(
     let buffered_file = BufWriter::with_capacity(64 * 1024, file);
     let mut zip = ZipWriter::new(buffered_file);
 
+    let detection_len = detection_xml.len() as u64;
+    let encrypted_len = std::fs::metadata(encrypted_content)
+        .map_err(|e| IntunewinError::FileReadError {
+            path: encrypted_content.to_path_buf(),
+            source: e,
+        })?
+        .len();
+
     // Add Detection.xml - stored uncompressed as per Microsoft format
     // Path: IntuneWinPackage/Metadata/Detection.xml
     let detection_options = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Stored)
-        .large_file(true);
+        .large_file(requires_zip64(detection_len));
 
     zip.start_file("IntuneWinPackage/Metadata/Detection.xml", detection_options)
         .map_err(|e| IntunewinError::ZipError(e.to_string()))?;
@@ -89,7 +103,7 @@ pub fn create_intunewin(
     // Use stored (no compression) since the content is already encrypted
     let content_options = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Stored)
-        .large_file(true);
+        .large_file(requires_zip64(encrypted_len));
 
     zip.start_file(
         "IntuneWinPackage/Contents/IntunePackage.intunewin",
@@ -149,6 +163,13 @@ fn derive_output_filename(setup_name: &str) -> String {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn test_requires_zip64_boundary() {
+        assert!(!requires_zip64(ZIP32_MAX_SIZE - 1));
+        assert!(!requires_zip64(ZIP32_MAX_SIZE));
+        assert!(requires_zip64(ZIP32_MAX_SIZE + 1));
+    }
 
     #[test]
     fn test_derive_output_filename() {
