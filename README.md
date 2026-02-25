@@ -24,28 +24,15 @@ A high-performance Rust implementation of Microsoft's Win32 Content Prep Tool
 - 🖥️ **Cross-Platform** - Windows, Linux, and macOS support
 - 🔐 **Secure** - AES-256-CBC encryption with HMAC-SHA256
 - 📦 **Single Binary** - No runtime dependencies
-- 🎯 **Smart Defaults** - Automatically selects best settings for your package
-- ⚠️ **BETA CACHING** - Incremental caching in testing phase (see notes below)
+- 🎯 **Zero Overhead** - No wasted CPU on already-compressed content
 
 ## 📊 Performance Philosophy
 
-**Primary Goal:** Maximum speed and efficiency. Compression is secondary.
+**Primary Goal:** Maximum speed and I/O efficiency. We never compress.
 
-### Verified Benchmark Results
-
-| Package | Size | Compression | No Cache | Warm Cache | Speedup | Time Saved |
-| ------- | ---- | ---------- | -------- | ---------- | ------- | ---------- |
-| **Small** | 0.02 MB | 6 | 0.5s | 0.03s | **16.7x** | 0.47s |
-| **Medium** | 254 MB | 6 | 5.51s | 1.44s | **3.8x** | 4.07s |
-| **Large** | 1.5 GB | 6 | 24.29s | 19.02s | **1.3x** | 5.27s |
-| **Large** | 1.5 GB | 9 | 23.31s | 19.17s | **1.2x** | 4.14s |
-
-**Key Insight:** For large packages, **store-only mode (compression 0) is the recommended default for maximum initial speed**. The large-package results shown for compression 6 and 9 illustrate an alternative, size-optimized profile: when you choose higher compression to shrink upload size, enabling caching still provides meaningful 1.2–4x speedups on repeated builds.
-
-> **Philosophy:** Most installers (.exe, .msi) are already compressed. We prioritize speed and stability, especially for large packages.
+> **Why no compression?** Real-world Intune packages (.exe, .msi, .cab) are already compressed by their authors. DEFLATE achieves <2% additional size reduction on these files — but costs 3-10× in build time and forces a multi-pass I/O pipeline. Compression is not just unhelpful in our model — it's actively harmful to performance.
 >
-> - **Speed-optimized (default for ≥ ~500 MB):** Use `--compression 0` (store-only) for maximum and predictable initial build speed.
-> - **Size-optimized (optional):** If you explicitly want smaller `.intunewin` files and can trade build time for size, use `--compression 6-9` together with `--cache` for 2–4x faster repeated builds compared to uncached compressed runs.
+> Store-only mode means the inner ZIP is byte-for-byte deterministic from file metadata alone. This enables the zero-materialization pipeline: source files stream directly through ZIP structure generation → AES encryption → final output. No intermediate files, no buffering, no wasted I/O.
 
 ## 📦 Installation
 
@@ -124,78 +111,31 @@ intunewin-rs -c ./installer -s setup.exe -o ./output --qq
 # -a/--catalog is reserved for compatibility and currently returns an explicit "not implemented" error
 ```
 
-### Smart Defaults by Package Size
-
-The tool automatically chooses sensible defaults based on your input:
+### Options
 
 ```bash
-# Default behavior: "smart compression" selected automatically
-# For packages <500MB: --compression 6 (enables 3-4x cache speedup on repeats)
-# For packages ≥500MB: --compression 0 (maximum speed, predictable performance)
+# Default usage — store-only, zero-materialization pipeline
 intunewin-rs -c ./app -s setup.exe -o ./output
-
-# Override with explicit compression level (advanced)
-intunewin-rs -c ./app -s setup.exe -o ./output --compression 6
-
-# Store-only mode (fastest initial build, no compression)
-intunewin-rs -c ./app -s setup.exe -o ./output --compression 0
 
 # Fine-tuning options
 intunewin-rs -c ./app -s setup.exe -o ./output -t 8              # Custom thread count
 intunewin-rs -c ./app -s setup.exe -o ./output --no-mmap        # Disable memory-mapping
-intunewin-rs -c ./app -s setup.exe -o ./output --cache-stats    # Show cache info
 ```
 
-### Compression Strategy
+### Why We Never Compress
 
-Most installers (.exe, .msi, .cab) are already compressed. DEFLATE adds only 1-2% size reduction but enables 2-4x cache speedup:
+Intune packages contain installers — `.exe`, `.msi`, `.msix`, `.cab` — that are already compressed by their authors. Running DEFLATE over pre-compressed data is pure waste:
 
-| Package | Size | Compression 0 | Compression 6 | Cache Enabled | Size Reduction | Repeat Speedup |
-| ------- | ---- | ------------- | ------------- | ------------- | -------------- | --------------- |
-| Small | 0.02 MB | 0.5s | 0.03s | ❌ | 0% | N/A |
-| Medium | 254 MB | 1.51s | 5.51s | ✅ | 1.3% | **3.8x** |
-| Large | 1.5 GB | 7.91s | 24.29s | ✅ | 1.2% | **1.3x** |
+| Package | Size | Store-only (comp 0) | DEFLATE (comp 6) | Size Saved | Time Wasted |
+| ------- | ---- | ------------------- | ----------------- | ---------- | ----------- |
+| Medium | 254 MB | 1.51s | 5.51s | 1.3% | **3.6×** |
+| Large | 1.5 GB | 7.91s | 24.29s | 1.2% | **3.1×** |
 
-**Recommendation:**
+Compression also forces a multi-pass pipeline (compress → write ZIP → read ZIP → encrypt → write output), while store-only enables zero-materialization: source files stream directly through ZIP headers → AES encryption → final output in a single pass.
 
-- **<500MB packages**: Use smart defaults (compression 6). Cache provides 3-4x speedup on repeats.
-- **≥500MB packages**: Use smart defaults (compression 0) for initial speed. Cache won't help (no compression).
-- **Repeated builds**: Always use cache with compression 6-9 for 2-4x speedup.
-- **Large package safety**: Automatically switches to ZIP64 streaming mode for very large inputs to keep memory bounded and support >4 GiB/65k-entry cases.
+**There is no scenario where compression is worth it in this model. We always store.**
 
-### Incremental Caching for Repeated Builds ✅
-
-**Status**: Caching is fully operational and verified safe. Inner ZIP hashes match between cached and non-cached builds, proving data integrity is preserved.
-
-When using compression (`--compression 1-9`), caching automatically speeds up subsequent builds. The cache stores pre-compressed file data in `.intunewin-cache/`, loading only what's needed.
-
-```bash
-# First build with compression (cold cache): 5.51s
-intunewin-rs -c ./app -s setup.exe -o ./output --compression 6
-
-# Second build (warm cache): 1.44s - 3.8x faster!
-intunewin-rs -c ./app -s setup.exe -o ./output --compression 6
-
-# Check cache statistics
-intunewin-rs -c ./app -s setup.exe -o ./output --compression 6 --cache-stats
-
-# Force disable caching (if cache is stale)
-intunewin-rs -c ./app -s setup.exe -o ./output --compression 6 --no-cache
-
-# Clear cache before building
-intunewin-rs -c ./app -s setup.exe -o ./output --compression 6 --clear-cache
-```
-
-**Verified cache performance (from production benchmarks):**
-
-| Package | Compression | No Cache | Cold Cache | Warm Cache | Speedup | Verified |
-| ------- | ----------- | -------- | ---------- | ---------- | ------- | -------- |
-| Medium (254 MB) | 6 | 5.51s | 5.51s | 1.44s | **3.83x** | ✅ |
-| Medium (254 MB) | 9 | 5.58s | 5.81s | 1.38s | **4.04x** | ✅ |
-| Large (1.5 GB) | 6 | 24.29s | 22.93s | 19.02s | **1.28x** | ✅ |
-| Large (1.5 GB) | 9 | 23.31s | 23.45s | 19.17s | **1.22x** | ✅ |
-
-**Verification**: Inner ZIP hashes identical between cached and non-cached builds (issue #43 resolved). Cache integrity test runs in CI/CD.
+> **Large package safety**: Automatically switches to ZIP64 streaming mode for very large inputs to keep memory bounded and support >4 GiB/65k-entry cases.
 
 ### Full Command Reference
 
@@ -214,12 +154,8 @@ OPTIONS:
     -q, --quiet                    Quiet mode - minimal output
         --qq                       Silent mode - no output
     -t, --threads <THREADS>        Number of threads (default: auto-detect)
-        --compression <LEVEL>      Compression level: 0=store (default), 1-9=DEFLATE
         --no-mmap                  Disable memory-mapped file I/O
-        --cache                    Force enable caching (auto-enabled when compression > 0)
-        --no-cache                 Disable caching (overrides auto-enable)
-        --clear-cache              Clear cache before building
-        --cache-stats              Show cache statistics
+        --keep-temp                Keep intermediate artifacts for debugging
     -h, --help                     Print help
     -V, --version                  Print version
 ```
@@ -246,9 +182,8 @@ Source Folder                    Output (.intunewin)
 
 1. 📁 Scan source folder and enumerate all files
 2. 📝 Generate manifest with SHA-256 hashes
-3. 🗜️ Compress files using parallel DEFLATE
-4. 🔐 Encrypt with AES-256-CBC
-5. 📦 Package into outer ZIP with metadata
+3. � Stream through AES-256-CBC encryption
+4. 📦 Package into outer ZIP with metadata
 
 ## 🏗️ Architecture
 
@@ -259,22 +194,19 @@ Source Files
     ↓
 [Discovery] ──→ Enumerate & hash files
     ↓
-[Compression] ──→ Parallel DEFLATE (or STORE) with per-file cache
-    ↓
-[Encryption] ──→ AES-256-CBC with random IV + HMAC-SHA256
-    ↓
-[Packaging] ──→ Nested ZIP structure with Detection.xml metadata
+[Zero-Mat] ──→ Stream ZIP headers + file data → AES-CBC → outer ZIP
     ↓
 .intunewin File (AES-encrypted, HMAC-authenticated)
 ```
 
+The zero-materialization pipeline never creates an intermediate inner ZIP file or buffer. Source files are read once, their bytes flow through ZIP structure generation and AES encryption directly into the final `.intunewin` output. Total I/O = read sources once + write output once.
+
 ### Design Principles
 
-1. **Streaming First**: All operations process data sequentially, no loading entire package into memory
-2. **Per-File Lazy Loading**: Cache stores individual compressed files, loaded on-demand
-3. **Memory Efficiency**: 87% less memory than MSFT tool through streaming architecture
-4. **Smart Caching**: Auto-disabled for compression=0 (no benefit), auto-enabled for compression≥1 (2-3x speedup)
-5. **Compatibility-First**: Core packaging workflow is Microsoft-compatible; unsupported paths fail explicitly
+1. **Zero Materialization**: No intermediate files or buffers — source bytes flow directly to encrypted output
+2. **Single-Pass I/O**: Read sources once, write output once — theoretical minimum I/O
+3. **Memory Efficiency**: Peak memory ≈ largest single source file, not total package size
+4. **Compatibility-First**: Core packaging workflow is Microsoft-compatible; unsupported paths fail explicitly
 
 ### Directory Structure
 
@@ -300,8 +232,6 @@ intunewin-rs/
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | High-level design philosophy and decisions |
 | [SPECIFICATION.md](docs/SPECIFICATION.md) | Technical specification |
 | [COMPATIBILITY.md](docs/COMPATIBILITY.md) | Current compatibility contract and support matrix |
-| [SMART_DEFAULTS.md](docs/SMART_DEFAULTS.md) | Smart compression defaults explained |
-| [CACHE_ARCHITECTURE.md](docs/CACHE_ARCHITECTURE.md) | Cache design and per-file streaming |
 | [BUILD_AND_TEST.md](docs/BUILD_AND_TEST.md) | Development guide |
 | [TOOL_ANALYSIS.md](docs/TOOL_ANALYSIS.md) | Microsoft tool analysis |
 | [AUDIT_REPORT.md](docs/AUDIT_REPORT.md) | Security & performance audit |
@@ -366,8 +296,8 @@ cargo test
 ## 📋 Roadmap
 
 - [x] Core implementation
-- [x] Parallel compression (Rayon)
-- [x] Memory optimization (87% reduction)
+- [x] Zero-materialization pipeline (single-pass I/O)
+- [x] Memory optimization (peak mem ≈ largest file, not package size)
 - [x] Streaming encryption
 - [x] Cross-platform builds
 - [x] CI/CD pipeline

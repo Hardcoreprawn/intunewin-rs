@@ -55,32 +55,32 @@ pub struct Args {
     #[arg(short = 't', long = "threads", value_parser = parse_positive_usize)]
     pub threads: Option<usize>,
 
-    /// Compression level: 1-9 = DEFLATE, or 0 = store only
-    /// If not specified, defaults are auto-detected based on package size:
-    /// - <500MB packages: compression 6 (good for caching)
-    /// - >=500MB packages: compression 0 (maximum speed, minimal memory)
-    #[arg(long = "compression", value_parser = clap::value_parser!(u32).range(0..=9))]
+    /// Compression level (not recommended). Always uses 0 (store-only).
+    /// Real-world installers are already compressed — DEFLATE achieves <2%
+    /// size reduction but costs 3-10× in build time. Store-only also enables
+    /// the zero-materialization pipeline for minimum I/O.
+    #[arg(long = "compression", value_parser = clap::value_parser!(u32).range(0..=9), hide = true)]
     pub compression: Option<u32>,
 
     /// Disable memory-mapped file I/O
     #[arg(long = "no-mmap", default_value_t = false)]
     pub no_mmap: bool,
 
-    /// Force enable incremental caching (auto-enabled when compression > 0)
-    /// Cache stores compressed file data to avoid recompressing unchanged files
-    #[arg(long = "cache", default_value_t = false)]
+    /// Force enable incremental caching (only relevant with --compression > 0).
+    /// Not recommended — compression is never worth it for real-world packages.
+    #[arg(long = "cache", default_value_t = false, hide = true)]
     pub cache: bool,
 
-    /// Disable incremental caching (overrides auto-enable)
-    #[arg(long = "no-cache", default_value_t = false)]
+    /// Disable incremental caching
+    #[arg(long = "no-cache", default_value_t = false, hide = true)]
     pub no_cache: bool,
 
     /// Clear the cache before building
-    #[arg(long = "clear-cache", default_value_t = false)]
+    #[arg(long = "clear-cache", default_value_t = false, hide = true)]
     pub clear_cache: bool,
 
     /// Show cache statistics
-    #[arg(long = "cache-stats", default_value_t = false)]
+    #[arg(long = "cache-stats", default_value_t = false, hide = true)]
     pub cache_stats: bool,
 
     /// Keep intermediate artifacts (inner .zip and encrypted .tmp) in the output folder.

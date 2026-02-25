@@ -176,7 +176,7 @@ fn compress_file(
     }
 }
 
-/// ZIP file writer that supports incremental/streaming writes
+/// ZIP file writer that supports incremental/streaming writes.
 struct StreamingZipWriter {
     file: File,
     entries: Vec<ZipEntryInfo>,
@@ -263,8 +263,9 @@ impl StreamingZipWriter {
         Ok(())
     }
 
-    /// Finalize the ZIP by writing central directory
-    fn finish(mut self) -> Result<()> {
+    /// Finalize the ZIP by writing central directory.
+    /// Returns the underlying writer so the caller can use it.
+    fn finish(mut self) -> Result<File> {
         if self.entries.len() > ZIP32_MAX_ENTRY_COUNT {
             return Err(IntunewinError::CompressionError(format!(
                 "Too many files for ZIP32: {} (max {})",
@@ -334,7 +335,7 @@ impl StreamingZipWriter {
         self.file.write_all(&0u16.to_le_bytes())?; // Comment length
 
         self.file.flush()?;
-        Ok(())
+        Ok(self.file)
     }
 }
 
@@ -537,7 +538,7 @@ pub fn compress_to_inner_zip_cached(
     }
 
     // Finalize ZIP file
-    zip_writer.finish()?;
+    let _ = zip_writer.finish()?;
 
     Ok(CompressionResult {
         zip_path,

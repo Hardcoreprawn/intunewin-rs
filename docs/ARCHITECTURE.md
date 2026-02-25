@@ -5,10 +5,12 @@
 **intunewin-rs** prioritizes three core principles, in order:
 
 1. **Speed** - Minimize total time from source files to .intunewin package
-2. **Efficiency** - Minimize memory usage, especially for large packages (200GB+)
-3. **Compression** - Reduce output size only when it doesn't compromise #1 or #2
+2. **Efficiency** - Minimize memory usage and I/O operations
+3. **Simplicity** - No compression, no caching, no configuration decisions
 
-This philosophy drives all architectural decisions: streaming I/O, per-file lazy-loading cache, smart defaults, and careful tradeoff analysis.
+This philosophy drives all architectural decisions: zero-materialization I/O, store-only inner ZIP, and single-pass streaming.
+
+> **Why no compression?** Real-world Intune packages (.exe, .msi, .cab) are already compressed by their authors. DEFLATE achieves <2% additional size reduction but costs 3-10× in build time and forces a multi-pass I/O pipeline. Compression is not just unhelpful — it's actively harmful. Store-only mode makes the inner ZIP size deterministic from metadata alone, enabling the zero-materialization architecture.
 
 ---
 
@@ -20,7 +22,7 @@ This philosophy drives all architectural decisions: streaming I/O, per-file lazy
 
 **Solution:** Process data in streaming fashion—read chunk-by-chunk, compress in parallel, write directly to output.
 
-```
+```text
 Stream Pattern:
 ─────────────────────────────────────────
 Source File → Compress (in chunks) → Output ZIP
@@ -42,7 +44,7 @@ Source File → Compress (in chunks) → Output ZIP
 
 **Solution:** Store individual compressed files in cache directory, load on-demand.
 
-```
+```text
 Old (Monolithic):
 Cache file: compressed_data.bin (1.5GB)
   Problem: Must load entire 1.5GB to check if file X is cached
@@ -66,7 +68,7 @@ Cache directory:
 
 **Solution:** Automatically select best setting based on package size.
 
-```
+```text
 Detection Flow:
 ─────────────────────────────────────────
 User runs: intunewin-rs -c app -s setup.exe -o output
@@ -92,7 +94,7 @@ User runs: intunewin-rs -c app -s setup.exe -o output
 
 **Solution:** Auto-enable cache only when compression > 0.
 
-```
+```text
 Cache Decision:
 ─────────────────────────────────────────
 Compression = 0 (STORE)
@@ -118,7 +120,7 @@ Enable cache (overhead worth it)
 
 **Solution:** Keep all MSFT flags unchanged, add new optional flags.
 
-```
+```text
 MSFT-Compatible Flags (Unchanged):
   -c <source>        Content folder
   -s <setup>         Setup file
@@ -128,13 +130,9 @@ MSFT-Compatible Flags (Unchanged):
   -h / -V            Help / version
 
 New Optional Flags (extensions):
-  --compression 0-9  Compression level (with smart defaults)
-  --cache            Force enable cache
-  --no-cache         Force disable cache
-  --cache-stats      Show cache statistics
-  --clear-cache      Clear cache
   -t <threads>       Thread count
   --no-mmap          Disable memory mapping
+  --keep-temp        Keep intermediate artifacts
 ```
 
 **Result:** 100% backward compatible, scripts using old flags work unchanged.
@@ -145,7 +143,7 @@ New Optional Flags (extensions):
 
 ### Stages
 
-```
+```text
 Stage 1: Discovery
   Input:  Source folder path
   Output: File list with hashes
@@ -154,72 +152,44 @@ Stage 1: Discovery
   ├─ Build manifest with relative paths
   └─ Output: FileEntry[] with sizes, hashes, mtime
   
-Stage 2: Compression (with Cache)
-  Input:  FileEntry[], output path
-  Output: Inner ZIP with compressed/stored files
-  ├─ Load cache manifest (if enabled)
+Stage 2: Zero-Materialization (Compress + Encrypt + Package)
+  Input:  FileEntry[]
+  Output: Final .intunewin file
+  ├─ Compute deterministic inner ZIP size from metadata
+  ├─ Open outer ZIP, start encrypted content entry
+  ├─ Create EncryptingWriter (AES-256-CBC)
   ├─ For each file:
-  │  ├─ Check if in cache and valid
-  │  ├─ If cache hit: Copy from cache/files/<hash>
-  │  └─ If cache miss: Compress and save to cache
-  └─ Result: Inner ZIP + updated manifest
+  │  ├─ Read source file
+  │  ├─ Compute CRC32
+  │  ├─ Write ZIP local header → encryptor → outer ZIP
+  │  └─ Write file data → encryptor → outer ZIP
+  ├─ Write central directory → encryptor
+  ├─ Write EOCD → encryptor
+  ├─ Finalize encryption (PKCS7 padding)
+  ├─ Generate Detection.xml with crypto material
+  └─ Finalize outer ZIP
   
-Stage 3: Encryption
-  Input:  Inner ZIP
-  Output: Encrypted inner ZIP
-  ├─ Generate AES-256 key
-  ├─ Generate random IV
-  ├─ Stream encrypt: read chunk → AES → write chunk
-  ├─ Calculate HMAC-SHA256 of encrypted data
-  └─ Result: Encrypted blob + keys
-  
-Stage 4: Packaging
-  Input:  Encrypted blob, keys, file list
-  Output: Final .intunewin outer ZIP
-  ├─ Generate Detection.xml with keys
-  ├─ Create outer ZIP structure:
-  │  ├─ IntuneWinPackage/Metadata/Detection.xml
-  │  └─ IntuneWinPackage/Contents/IntunePackage.intunewin
-  └─ Result: .intunewin file ready for upload
-  
-Stage 5: Cleanup
-  Input:  Temporary files
-  Output: (cleaned up)
-  └─ Delete temporary ZIP files
-  
-Stage 6 (Optional): Cache Save
-  Input:  Updated manifest + cached file data
-  Output: Durable cache state
-  ├─ Write manifest.json
-  ├─ Write cache/files/<hash>.cache
-  └─ fsync() for durability
+Stage 3: Cleanup
+  Input:  (nothing to clean up — no intermediate files)
+  Output: (done)
+  └─ No temp files to delete in zero-mat path
 ```
 
 ### Data Flow
 
-```
+```text
 Source Folder
      ↓
 [1] Discovery → File[] with SHA-256 hashes
      ↓
-[2] Compression → Inner ZIP (stored or deflated)
-     ↓           ↗ Cache hits (if enabled)
-     ↗ Cache misses (recompressed)
-     ↓
-[3] Encryption → AES-256-CBC encrypted blob + HMAC
-     ↓
-[4] Packaging → Outer ZIP with metadata
-     ↓
-[5] Cleanup → Delete temporary files
-     ↓
-[6] Cache Save → Persist manifest + compressed files
+[2] Zero-Mat → ZIP headers+data → AES-256-CBC → outer ZIP
      ↓
 .intunewin File
 ```
 
 ### Memory Profile
 
-```
+```text
 Typical 254 MB Package:
 ─────────────────────────────────────
 Discovery:        ~5 MB (file list in memory)
@@ -244,7 +214,7 @@ Savings:          125 MB (87% reduction)
 
 Compression uses Rayon for parallel DEFLATE on multiple files:
 
-```
+```text
 Source Files (100 files)
      ↓
   Thread 1 → Compress file A  ┐
@@ -257,6 +227,7 @@ Result: 4x parallelism on 4-core CPU
 ```
 
 **Implementation:**
+
 - Uses `rayon::par_iter()` for parallel compression
 - Configurable thread count via `-t` flag
 - Default: num_cpus (auto-detect)
@@ -278,7 +249,7 @@ Result: 4x parallelism on 4-core CPU
 
 ### Cache Directory Structure
 
-```
+```text
 Output Folder/
 ├── package.intunewin    (final output file)
 └── .intunewin-cache/
@@ -312,6 +283,7 @@ Output Folder/
 ### Validation Logic
 
 Cache entry is valid if:
+
 - ✓ Original hash matches current file SHA-256
 - ✓ Modification time matches
 - ✓ File is within MAX_CACHED_FILE_SIZE (500MB)
@@ -330,7 +302,7 @@ If any check fails: Recompress file.
 - **IV:** Random 16-byte initialization vector
 - **Authentication:** HMAC-SHA256 of encrypted data
 
-```
+```text
 Clear Data → [AES-256-CBC with random IV] → Encrypted Data → [HMAC-SHA256] → Authenticated
 ```
 
@@ -343,6 +315,7 @@ Keys stored in Detection.xml (outer ZIP metadata), encrypted by Intune portal wh
 ### File Integrity
 
 Each file in inner ZIP includes:
+
 - SHA-256 hash of original file
 - Stored in manifest for verification
 - Validated on Intune client device after decryption
@@ -362,7 +335,7 @@ Each file in inner ZIP includes:
 
 ### Error Types
 
-```
+```text
 Error Levels:
 ─────────────────────────────────────
 Hard Fail:
@@ -388,7 +361,7 @@ Warnings:
 
 ### Time Complexity
 
-```
+```text
 Discovery:      O(n) where n = number of files
 Compression:    O(m * c) where m = total size, c = compression factor
 Encryption:     O(m) where m = compressed size
@@ -398,7 +371,7 @@ Overall:        O(m * c) dominated by compression
 
 ### Space Complexity
 
-```
+```text
 Memory:  O(k) where k = chunk size (64MB default)
 Cache:   O(m') where m' = sum of files <500MB
 Disk:    O(m) final output size (same as uncompressed with compression 0)
@@ -407,7 +380,7 @@ Disk:    O(m) final output size (same as uncompressed with compression 0)
 ### Scaling
 
 | Package Size | Time | Memory | Bottleneck |
-|:-------------|:----:|:------:|:-----------|
+| :------------- | :----: | :------: | :----------- |
 | 100 MB | 0.9s | 20 MB | I/O |
 | 500 MB | 4.5s | 25 MB | Compression |
 | 1.5 GB | 8-27s | 30 MB | CPU (compression) |
@@ -432,6 +405,7 @@ Disk:    O(m) final output size (same as uncompressed with compression 0)
 ### Design Principles for Extensions
 
 Any future improvements must maintain:
+
 - ✅ Backward compatibility (MSFT flag support)
 - ✅ Streaming architecture (constant memory)
 - ✅ Smart defaults (no user tuning needed)

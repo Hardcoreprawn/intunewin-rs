@@ -49,10 +49,9 @@ fn test_cache_integrity_small_package() {
     let _ = fs::remove_dir_all(&output_dir);
     fs::create_dir_all(&output_dir).expect("Failed to create output directory");
 
-    // Test with compression 0 (store only)
-    test_cache_for_compression(&test_data_path, &output_dir, 0);
-
-    // Test with compression 6 (common case)
+    // Test with compression 6 (the only case where caching applies).
+    // Compression 0 uses the zero-materialization pipeline which doesn't
+    // produce an intermediate ZIP and doesn't use caching.
     test_cache_for_compression(&test_data_path, &output_dir, 6);
 
     let _ = fs::remove_dir_all(&output_dir);
