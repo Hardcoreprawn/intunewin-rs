@@ -8,11 +8,10 @@
 //! ## Features
 //!
 //! - Compatible with Microsoft IntuneWinAppUtil output format
-//! - Parallel compression using rayon
+//! - Zero-materialization pipeline (single-pass I/O)
 //! - Memory-mapped file I/O for large files
-//! - Configurable compression levels
+//! - AES-256-CBC encryption with HMAC-SHA256
 //! - Progress indication
-//! - Incremental caching for faster subsequent builds
 
 pub mod cache;
 pub mod cli;

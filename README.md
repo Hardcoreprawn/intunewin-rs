@@ -219,8 +219,8 @@ intunewin-rs/
 │   ├── crypto/          # AES-256-CBC, HMAC-SHA256, key generation
 │   ├── format/          # IntuneWin format parsing, manifest, detection.xml
 │   ├── io/              # Memory-mapped file reading, streaming writes
-│   ├── cache/           # Per-file lazy-loading cache with streaming backend
-│   └── pipeline/        # Parallel discovery, compression, packaging stages
+│   ├── cache/           # Legacy caching support (unused in zero-mat pipeline)
+│   └── pipeline/        # Discovery, zero-materialization, packaging stages
 ├── tests/               # Integration tests
 └── testdata/            # Benchmark fixtures (small, medium, large)
 ```
