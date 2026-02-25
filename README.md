@@ -44,7 +44,7 @@ Download the latest release for your platform from the [Releases page](https://g
 
 ```powershell
 # Download and extract
-$version = "0.1.0"
+$version = "0.3.0"
 Invoke-WebRequest -Uri "https://github.com/hardcoreprawn/intunewin-rs/releases/download/v$version/intunewin-rs-x86_64-pc-windows-msvc.zip" -OutFile "intunewin-rs.zip"
 Expand-Archive -Path "intunewin-rs.zip" -DestinationPath "."
 
@@ -180,9 +180,9 @@ Source Folder                    Output (.intunewin)
 **Process:**
 
 1. 📁 Scan source folder and enumerate all files
-2. 📝 Generate manifest with SHA-256 hashes
-3. � Stream through AES-256-CBC encryption
-4. 📦 Package into outer ZIP with metadata
+2. 📝 Compute SHA-256 hashes and generate detection manifest
+3. 🔐 Stream ZIP structure + file data through AES-256-CBC encryption
+4. 📦 Write final .intunewin (outer ZIP with metadata)
 
 ## 🏗️ Architecture
 
@@ -299,7 +299,7 @@ cargo test
 - [x] Streaming encryption
 - [x] Cross-platform builds
 - [x] CI/CD pipeline
-- [ ] Progress bars (indicatif)
+- [x] Progress bars (indicatif)
 - [ ] Configuration file support
 - [ ] Ctrl+C signal handling
 - [ ] Async I/O (tokio)
