@@ -1,6 +1,5 @@
 //! Pipeline module orchestrating the IntuneWin packaging process.
 
-pub mod compression;
 pub mod discovery;
 pub mod packager;
 pub mod zero_mat;

@@ -19,8 +19,8 @@
 A high-performance Rust implementation of Microsoft's Win32 Content Prep Tool
 
 - 🔄 **Core CLI Compatibility** - Compatible with the Microsoft `-c/-s/-o` workflow
-- ⚡ **2.6x Faster** - Streaming architecture optimized for speed
-- 💾 **87% Less Memory** - Efficient I/O with per-file lazy-loading cache
+- ⚡ **2.6x Faster** - Zero-materialization pipeline with single-pass I/O
+- 💾 **Minimal Memory** - Peak memory ≈ largest single source file
 - 🖥️ **Cross-Platform** - Windows, Linux, and macOS support
 - 🔐 **Secure** - AES-256-CBC encryption with HMAC-SHA256
 - 📦 **Single Binary** - No runtime dependencies
@@ -155,7 +155,6 @@ OPTIONS:
         --qq                       Silent mode - no output
     -t, --threads <THREADS>        Number of threads (default: auto-detect)
         --no-mmap                  Disable memory-mapped file I/O
-        --keep-temp                Keep intermediate artifacts for debugging
     -h, --help                     Print help
     -V, --version                  Print version
 ```
@@ -219,7 +218,6 @@ intunewin-rs/
 │   ├── crypto/          # AES-256-CBC, HMAC-SHA256, key generation
 │   ├── format/          # IntuneWin format parsing, manifest, detection.xml
 │   ├── io/              # Memory-mapped file reading, streaming writes
-│   ├── cache/           # Legacy caching support (unused in zero-mat pipeline)
 │   └── pipeline/        # Discovery, zero-materialization, packaging stages
 ├── tests/               # Integration tests
 └── testdata/            # Benchmark fixtures (small, medium, large)

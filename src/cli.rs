@@ -58,13 +58,6 @@ pub struct Args {
     /// Disable memory-mapped file I/O
     #[arg(long = "no-mmap", default_value_t = false)]
     pub no_mmap: bool,
-
-    /// Keep intermediate artifacts (inner .zip and encrypted .tmp) in the output folder.
-    ///
-    /// Useful for debugging and for cache-integrity verification, since final `.intunewin`
-    /// output is intentionally non-deterministic due to random encryption keys/IV.
-    #[arg(long = "keep-temp", default_value_t = false)]
-    pub keep_temp: bool,
 }
 
 impl Args {

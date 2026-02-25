@@ -13,7 +13,6 @@
 //! - AES-256-CBC encryption with HMAC-SHA256
 //! - Progress indication
 
-pub mod cache;
 pub mod cli;
 pub mod crypto;
 pub mod error;
