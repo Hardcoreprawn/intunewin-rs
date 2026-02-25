@@ -282,7 +282,7 @@ pub fn encrypt_file_streaming(
 }
 
 /// Encrypt a chunk with CBC mode, no padding (for middle chunks)
-fn encrypt_chunk_no_padding(
+pub fn encrypt_chunk_no_padding(
     plaintext: &[u8],
     cipher: &aes::Aes256,
     current_iv: &mut [u8; 16],
@@ -313,7 +313,7 @@ fn encrypt_chunk_no_padding(
 }
 
 /// Encrypt a chunk with PKCS7 padding (for last chunk)
-fn encrypt_chunk_with_padding(
+pub fn encrypt_chunk_with_padding(
     plaintext: &[u8],
     cipher: &aes::Aes256,
     current_iv: &mut [u8; 16],

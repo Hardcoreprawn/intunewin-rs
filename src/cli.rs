@@ -55,40 +55,9 @@ pub struct Args {
     #[arg(short = 't', long = "threads", value_parser = parse_positive_usize)]
     pub threads: Option<usize>,
 
-    /// Compression level: 1-9 = DEFLATE, or 0 = store only
-    /// If not specified, defaults are auto-detected based on package size:
-    /// - <500MB packages: compression 6 (good for caching)
-    /// - >=500MB packages: compression 0 (maximum speed, minimal memory)
-    #[arg(long = "compression", value_parser = clap::value_parser!(u32).range(0..=9))]
-    pub compression: Option<u32>,
-
     /// Disable memory-mapped file I/O
     #[arg(long = "no-mmap", default_value_t = false)]
     pub no_mmap: bool,
-
-    /// Force enable incremental caching (auto-enabled when compression > 0)
-    /// Cache stores compressed file data to avoid recompressing unchanged files
-    #[arg(long = "cache", default_value_t = false)]
-    pub cache: bool,
-
-    /// Disable incremental caching (overrides auto-enable)
-    #[arg(long = "no-cache", default_value_t = false)]
-    pub no_cache: bool,
-
-    /// Clear the cache before building
-    #[arg(long = "clear-cache", default_value_t = false)]
-    pub clear_cache: bool,
-
-    /// Show cache statistics
-    #[arg(long = "cache-stats", default_value_t = false)]
-    pub cache_stats: bool,
-
-    /// Keep intermediate artifacts (inner .zip and encrypted .tmp) in the output folder.
-    ///
-    /// Useful for debugging and for cache-integrity verification, since final `.intunewin`
-    /// output is intentionally non-deterministic due to random encryption keys/IV.
-    #[arg(long = "keep-temp", default_value_t = false)]
-    pub keep_temp: bool,
 }
 
 impl Args {
@@ -100,32 +69,5 @@ impl Args {
     /// Returns true if silent mode is enabled
     pub fn is_silent(&self) -> bool {
         self.silent
-    }
-
-    /// Returns true if caching should be used.
-    ///
-    /// Caching is automatically enabled when compression > 0 (where it provides
-    /// 2-3x speedup on subsequent builds). It's disabled for compression = 0
-    /// (STORE mode) where it adds overhead without benefit.
-    ///
-    /// Use --cache to force enable, --no-cache to force disable.
-    pub fn use_cache(&self) -> bool {
-        let compression = self.compression.unwrap_or(0);
-        self.use_cache_with_compression(compression)
-    }
-
-    /// Returns true if caching should be used for a resolved compression level.
-    pub fn use_cache_with_compression(&self, compression: u32) -> bool {
-        if self.no_cache {
-            // Explicit disable always wins
-            false
-        } else if self.cache {
-            // Explicit enable
-            true
-        } else {
-            // Auto-enable when compression > 0 (beneficial)
-            // Auto-disable when compression = 0 (adds overhead)
-            compression > 0
-        }
     }
 }
