@@ -312,6 +312,32 @@ pub fn encrypt_chunk_no_padding(
     output
 }
 
+/// Encrypt data in-place with CBC mode, no padding.
+///
+/// Like `encrypt_chunk_no_padding` but avoids allocating a new Vec — the
+/// ciphertext is written back into `data`. Length must be a multiple of 16.
+pub fn encrypt_chunk_no_padding_inplace(
+    data: &mut [u8],
+    cipher: &aes::Aes256,
+    current_iv: &mut [u8; 16],
+) {
+    use aes::cipher::BlockEncrypt;
+    debug_assert!(data.len() % 16 == 0);
+
+    for block in data.chunks_exact_mut(16) {
+        // XOR with IV (CBC mode)
+        for (b, iv_byte) in block.iter_mut().zip(current_iv.iter()) {
+            *b ^= iv_byte;
+        }
+
+        // Encrypt block
+        cipher.encrypt_block(block.into());
+
+        // Update IV for next block
+        current_iv.copy_from_slice(block);
+    }
+}
+
 /// Encrypt a chunk with PKCS7 padding (for last chunk)
 pub fn encrypt_chunk_with_padding(
     plaintext: &[u8],

@@ -66,25 +66,13 @@ pub fn run(args: &Args) -> Result<()> {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "setup".to_string());
 
-    let use_channeled = std::env::var("INTUNEWIN_CHANNELED").is_ok();
-
-    let result = if use_channeled {
-        zero_mat::run_zero_mat_channeled(
-            &discovery,
-            &setup_name,
-            &args.output,
-            use_mmap,
-            Some(&zero_mat_bar),
-        )
-    } else {
-        zero_mat::run_zero_mat(
-            &discovery,
-            &setup_name,
-            &args.output,
-            use_mmap,
-            Some(&zero_mat_bar),
-        )
-    }
+    let result = zero_mat::run_zero_mat(
+        &discovery,
+        &setup_name,
+        &args.output,
+        use_mmap,
+        Some(&zero_mat_bar),
+    )
     .map_err(|e| anyhow::anyhow!("Zero-materialization pipeline failed: {}", e))?;
 
     zero_mat_bar.finish_with_message(format!(
