@@ -8,6 +8,16 @@
 //!
 //! I/O budget: read sources once + write output once = theoretical minimum.
 //! Memory budget: one source file + encryption buffer + metadata ≈ O(largest_file).
+//!
+//! ## Channeled variant
+//!
+//! `run_zero_mat_channeled()` splits the pipeline into two threads connected
+//! by a bounded `crossbeam::channel`:
+//!   - **Producer**: reads source files, computes CRC32, serializes ZIP structure bytes
+//!   - **Consumer**: receives byte chunks, encrypts (AES-CBC), hashes (HMAC+SHA256), writes
+//!
+//! The bounded channel applies backpressure so memory stays bounded at
+//! `channel_depth * chunk_size` regardless of package size.
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -459,6 +469,230 @@ pub fn run_zero_mat(
 
     // ── Detection.xml ─────────────────────────────────────────────────
 
+    let detection_info = StreamingDetectionInfo {
+        name: setup_name.to_string(),
+        unencrypted_content_size: inner_zip_size,
+        setup_file: setup_name.to_string(),
+        key: crypto.key,
+        iv: crypto.iv,
+        mac_key: crypto.mac_key,
+        mac: crypto.mac,
+        file_digest: crypto.file_digest,
+    };
+
+    let detection_xml = generate_detection_xml_streaming(&detection_info)?;
+
+    let detection_options = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Stored)
+        .large_file(false);
+
+    outer_zip
+        .start_file("IntuneWinPackage/Metadata/Detection.xml", detection_options)
+        .map_err(|e| IntunewinError::ZipError(e.to_string()))?;
+
+    outer_zip
+        .write_all(detection_xml.as_bytes())
+        .map_err(|e| IntunewinError::CompressionError(e.to_string()))?;
+
+    outer_zip
+        .finish()
+        .map_err(|e| IntunewinError::ZipError(e.to_string()))?;
+
+    let final_size = std::fs::metadata(&output_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    Ok(ZeroMatResult {
+        output_path,
+        final_size,
+        inner_zip_size,
+        encrypted_size: crypto.total_encrypted,
+    })
+}
+
+// ── Channeled (two-thread) variant ───────────────────────────────────
+
+/// Default bounded channel depth. Each slot holds one source file's
+/// worth of data (header + body), so memory ceiling ≈ depth × largest_file.
+const CHANNEL_DEPTH: usize = 4;
+
+/// Message from producer to consumer.
+enum Chunk {
+    /// A file's local header bytes + raw file data, plus progress increment.
+    FileEntry {
+        header: Vec<u8>,
+        data: Vec<u8>,
+        progress_bytes: u64,
+    },
+    /// Trailer: central directory + EOCD bytes (sent once at the end).
+    Trailer(Vec<u8>),
+}
+
+/// Serialize a local file header into a standalone Vec.
+fn serialize_local_header(name: &[u8], crc32: u32, size: u32) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(30 + name.len());
+    // Infallible — writing to Vec<u8> cannot fail.
+    let _ = write_local_header(&mut buf, name, crc32, size);
+    buf
+}
+
+/// Serialize central directory + EOCD into a standalone Vec.
+fn serialize_trailer(
+    cd_entries: &[CdEntry],
+    cd_offset: u32,
+) -> std::result::Result<Vec<u8>, String> {
+    let mut buf = Vec::new();
+    let mut cd_size: u64 = 0;
+    for entry in cd_entries {
+        write_central_dir_entry(&mut buf, entry).map_err(|e| e.to_string())?;
+        cd_size += 46 + entry.normalized_path.len() as u64;
+    }
+    let cd_size_u32 = u32::try_from(cd_size)
+        .map_err(|_| format!("central directory size overflow: {cd_size}"))?;
+    let entry_count = u16::try_from(cd_entries.len())
+        .map_err(|_| format!("entry count overflow: {}", cd_entries.len()))?;
+    write_eocd(&mut buf, entry_count, cd_size_u32, cd_offset).map_err(|e| e.to_string())?;
+    Ok(buf)
+}
+
+/// Run the zero-materialization pipeline with a bounded channel between
+/// a producer thread (file reads + ZIP structure) and a consumer thread
+/// (AES-CBC encryption + disk writes).
+///
+/// Same correctness guarantees as `run_zero_mat()`, but overlaps disk
+/// reads with encryption/hashing work.
+pub fn run_zero_mat_channeled(
+    discovery: &DiscoveryResult,
+    setup_name: &str,
+    output_folder: &Path,
+    use_mmap: bool,
+    progress_bar: Option<&ProgressBar>,
+) -> Result<ZeroMatResult> {
+    validate_zero_mat(discovery)?;
+
+    let inner_zip_size = compute_inner_zip_size(discovery);
+    let encrypted_size = ((inner_zip_size / 16) + 1) * 16;
+
+    let output_filename = derive_output_filename(setup_name);
+    let output_path = output_folder.join(&output_filename);
+
+    if !output_folder.exists() {
+        std::fs::create_dir_all(output_folder).map_err(|e| IntunewinError::FileWriteError {
+            path: output_folder.to_path_buf(),
+            source: e,
+        })?;
+    }
+
+    // Clone file metadata for the producer thread (just paths + sizes, not data).
+    let files: Vec<_> = discovery
+        .files
+        .iter()
+        .map(|f| (f.absolute_path.clone(), f.normalized_path.clone(), f.size))
+        .collect();
+    let use_mmap_clone = use_mmap;
+
+    let (tx, rx) = crossbeam_channel::bounded::<Chunk>(CHANNEL_DEPTH);
+
+    // ── Producer thread ───────────────────────────────────────────────
+    let producer = std::thread::spawn(move || -> std::result::Result<(), String> {
+        let mut cd_entries: Vec<CdEntry> = Vec::with_capacity(files.len());
+        let mut local_offset: u64 = 0;
+
+        for (abs_path, normalized_path, file_size) in &files {
+            let size_u32 = u32::try_from(*file_size)
+                .map_err(|_| format!("file size overflow: {file_size}"))?;
+            let header_offset = u32::try_from(local_offset)
+                .map_err(|_| format!("local header offset overflow: {local_offset}"))?;
+
+            let data = read_file_smart(abs_path, use_mmap_clone).map_err(|e| e.to_string())?;
+            let crc = crc32fast::hash(&data);
+
+            let header = serialize_local_header(normalized_path.as_bytes(), crc, size_u32);
+
+            tx.send(Chunk::FileEntry {
+                header,
+                data,
+                progress_bytes: *file_size,
+            })
+            .map_err(|_| "consumer thread dropped".to_string())?;
+
+            cd_entries.push(CdEntry {
+                normalized_path: normalized_path.clone(),
+                crc32: crc,
+                size: size_u32,
+                local_header_offset: header_offset,
+            });
+
+            local_offset += 30 + normalized_path.len() as u64 + file_size;
+        }
+
+        // Send the trailer (central directory + EOCD).
+        let cd_offset = u32::try_from(local_offset)
+            .map_err(|_| format!("cd offset overflow: {local_offset}"))?;
+        let trailer = serialize_trailer(&cd_entries, cd_offset)?;
+        tx.send(Chunk::Trailer(trailer))
+            .map_err(|_| "consumer thread dropped".to_string())?;
+
+        Ok(())
+    });
+
+    // ── Consumer (this thread): encrypt + write ───────────────────────
+
+    let file = File::create(&output_path).map_err(|e| IntunewinError::FileWriteError {
+        path: output_path.clone(),
+        source: e,
+    })?;
+    let buffered_file = BufWriter::with_capacity(BUFFER_SIZE, file);
+    let mut outer_zip = ZipWriter::new(buffered_file);
+
+    let content_options = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Stored)
+        .large_file(requires_zip64(encrypted_size));
+
+    outer_zip
+        .start_file(
+            "IntuneWinPackage/Contents/IntunePackage.intunewin",
+            content_options,
+        )
+        .map_err(|e| IntunewinError::ZipError(e.to_string()))?;
+
+    let mut enc = EncryptingWriter::new(&mut outer_zip);
+
+    // Receive chunks from producer and write through encryptor.
+    for chunk in &rx {
+        match chunk {
+            Chunk::FileEntry {
+                header,
+                data,
+                progress_bytes,
+            } => {
+                enc.write_all(&header)
+                    .map_err(|e| IntunewinError::CompressionError(e.to_string()))?;
+                enc.write_all(&data)
+                    .map_err(|e| IntunewinError::CompressionError(e.to_string()))?;
+                if let Some(bar) = progress_bar {
+                    bar.inc(progress_bytes);
+                }
+            }
+            Chunk::Trailer(trailer_bytes) => {
+                enc.write_all(&trailer_bytes)
+                    .map_err(|e| IntunewinError::CompressionError(e.to_string()))?;
+            }
+        }
+    }
+
+    // Wait for producer to finish and propagate errors.
+    producer
+        .join()
+        .map_err(|_| IntunewinError::CompressionError("producer thread panicked".into()))?
+        .map_err(IntunewinError::CompressionError)?;
+
+    // Finalize encryption.
+    let crypto = enc
+        .finish()
+        .map_err(|e| IntunewinError::EncryptionError(e.to_string()))?;
+
+    // Detection.xml
     let detection_info = StreamingDetectionInfo {
         name: setup_name.to_string(),
         unencrypted_content_size: inner_zip_size,
