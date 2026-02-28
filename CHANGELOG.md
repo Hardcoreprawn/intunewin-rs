@@ -13,6 +13,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Future features and improvements will be listed here
 
+## [0.4.0] - 2026-02-28
+
+### Added
+
+- Channeled two-thread producer/consumer pipeline via `crossbeam-channel` for
+  overlapped I/O and encryption
+- Sub-file chunking (1 MB) enables fine-grained parallelism even for single
+  large files
+- In-place AES-CBC encryption (`encrypt_chunk_no_padding_inplace`) eliminates
+  per-chunk allocation
+- `FileBytes` enum and `open_file_for_streaming` for zero-copy mmap streaming
+
+### Changed
+
+- Zero-materialization pipeline is now channeled by default (no env-var toggle)
+- Large-file benchmark: +9.7% p50 / +16.8% p95 throughput improvement
+
+### Removed
+
+- Legacy single-thread `run_zero_mat` code path
+- `INTUNEWIN_CHANNELED` environment variable toggle
+
 ## [0.3.0] - 2026-02-23
 
 ### Added
