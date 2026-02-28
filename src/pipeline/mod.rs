@@ -59,14 +59,16 @@ pub fn run(args: &Args) -> Result<()> {
         &stage_msg(2, TOTAL_STAGES, "Packaging"),
     );
 
+    let setup_name = discovery
+        .setup_file()
+        .relative_path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "setup".to_string());
+
     let result = zero_mat::run_zero_mat(
         &discovery,
-        &discovery
-            .setup_file()
-            .relative_path
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "setup".to_string()),
+        &setup_name,
         &args.output,
         use_mmap,
         Some(&zero_mat_bar),

@@ -2,4 +2,4 @@
 
 pub mod mmap;
 
-pub use mmap::read_file_smart;
+pub use mmap::{open_file_for_streaming, read_file_smart, FileBytes};

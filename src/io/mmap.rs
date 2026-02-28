@@ -89,6 +89,57 @@ fn read_standard(file: &File, path: &Path, size: u64) -> Result<Vec<u8>> {
     Ok(buffer)
 }
 
+/// Borrowable file contents — either an mmap or an owned buffer.
+///
+/// `Deref<Target=[u8]>` lets callers uniformly slice, iterate, and hash
+/// the data regardless of backing storage. Unlike `read_file_smart`,
+/// the `Mapped` variant keeps the mmap alive (no `.to_vec()` copy) so
+/// callers can stream sub-file chunks without fully materializing the data.
+pub enum FileBytes {
+    Mapped(Mmap),
+    Buffered(Vec<u8>),
+}
+
+impl std::ops::Deref for FileBytes {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            FileBytes::Mapped(m) => m,
+            FileBytes::Buffered(v) => v,
+        }
+    }
+}
+
+/// Open a file and return its contents as a borrowable byte source.
+///
+/// Uses mmap for large files (keeps the mapping alive, no heap copy)
+/// and standard read for small files.
+pub fn open_file_for_streaming(path: &Path, use_mmap: bool) -> Result<FileBytes> {
+    let file = File::open(path).map_err(|e| IntunewinError::FileReadError {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
+
+    let metadata = file.metadata().map_err(|e| IntunewinError::FileReadError {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
+
+    let file_size = metadata.len();
+
+    if use_mmap && file_size > MMAP_THRESHOLD {
+        let mmap = unsafe {
+            Mmap::map(&file).map_err(|e| IntunewinError::MmapError {
+                path: path.to_path_buf(),
+                source: e,
+            })?
+        };
+        Ok(FileBytes::Mapped(mmap))
+    } else {
+        read_standard(&file, path, file_size).map(FileBytes::Buffered)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
