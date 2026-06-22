@@ -21,7 +21,7 @@ jobs:
       release_id: ${{ steps.create_release.outputs.id }}
       version: ${{ steps.get_version.outputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Get version from tag
         id: get_version
@@ -131,7 +131,7 @@ jobs:
             ext: ""
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -222,7 +222,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all release assets
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
